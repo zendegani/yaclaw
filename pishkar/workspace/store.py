@@ -16,6 +16,8 @@ state-machine columns (`delivered_at`, `turns.ended_at`,
 `tool_calls.status`). Everything else is insert-only.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -138,7 +140,7 @@ class SessionStore:
             await self._db.close()
             self._db = None
 
-    async def __aenter__(self) -> "SessionStore":
+    async def __aenter__(self) -> SessionStore:
         await self.open()
         return self
 
