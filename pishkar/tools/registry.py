@@ -6,11 +6,9 @@ function. `ToolRegistry.register()` collects them; `.schemas()` emits the
 list shape expected by the provider; `.call()` validates+dispatches.
 
 Tool *execution* (timeout, max-result-size, approval gate) lives in
-`ToolRunner` (item 8). Tools registered here are plain async functions —
-the runner wraps them.
+`ToolRunner`. Tools registered here are plain async functions — the
+runner wraps them.
 """
-
-from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable

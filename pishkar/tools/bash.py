@@ -1,12 +1,10 @@
 """`bash` tool — runs a shell command and returns combined stdout/stderr.
 
-This is the raw implementation. `ToolRunner` (item 8) wraps it with the
-30-second default timeout and the 1 MB max-result cap. Approval gate
-(item 9) decides whether to invoke at all. The tool function itself
-is intentionally thin so the runner can compose policies around it.
+This is the raw implementation. `ToolRunner` wraps it with the 30-second
+default timeout and the 1 MB max-result cap. The approval gate decides
+whether to invoke at all. The tool function itself is intentionally thin
+so the runner can compose policies around it.
 """
-
-from __future__ import annotations
 
 import asyncio
 

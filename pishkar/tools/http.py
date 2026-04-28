@@ -1,11 +1,9 @@
 """`http` tool — minimal HTTP client built on `urllib` (no extra deps).
 
 Wrapped in `asyncio.to_thread` so the agent loop doesn't block. Real
-timeout / size enforcement comes from `ToolRunner` (item 8); this
-function only sets a generous urllib-level safety timeout.
+timeout / size enforcement comes from `ToolRunner`; this function only
+sets a generous urllib-level safety timeout.
 """
-
-from __future__ import annotations
 
 import json as _json
 import urllib.request

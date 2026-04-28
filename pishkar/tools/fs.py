@@ -1,11 +1,9 @@
 """Filesystem tools: `read_file`, `write_file`.
 
 Writes go through `atomic_write_text` so a crash mid-write cannot corrupt
-the target. Both tools return plain strings — `ToolRunner` (item 8)
-applies the max-result-size cap.
+the target. Both tools return plain strings — `ToolRunner` applies the
+max-result-size cap.
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 

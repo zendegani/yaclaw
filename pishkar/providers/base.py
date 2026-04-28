@@ -1,17 +1,15 @@
 """ModelProvider Protocol — the seam every LLM backend implements.
 
 Day-one implementation is `LiteLLMProvider` (Anthropic + OpenAI fallback via
-`litellm.Router`). `BudgetedProvider` (item 6) wraps any `ModelProvider`.
-Tests use a hand-rolled fake satisfying the Protocol.
+`litellm.Router`). `BudgetedProvider` wraps any `ModelProvider`. Tests use
+a hand-rolled fake satisfying the Protocol.
 
 The streaming shape is intentionally narrower than the raw Anthropic SSE
-event set — the agent loop (item 11) is responsible for translating these
-chunks into the public `core.events` types. Keeping the provider surface
-thin means a new backend only needs to emit text deltas, tool-call deltas,
-a stop reason, and final usage.
+event set — the agent loop translates these chunks into the public
+`core.events` types. Keeping the provider surface thin means a new backend
+only needs to emit text deltas, tool-call deltas, a stop reason, and final
+usage.
 """
-
-from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable

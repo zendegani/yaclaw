@@ -10,8 +10,6 @@ to: `chunk.choices[0].delta.{content, tool_calls}` plus
 `chunk.choices[0].finish_reason` and a final `chunk.usage`.
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 

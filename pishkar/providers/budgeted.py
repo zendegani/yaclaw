@@ -13,8 +13,6 @@ day, and freshly-observed `Usage` from each turn is written back via
 `record_token_spend`. Without a `user_id` the wrapper is a pass-through.
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any

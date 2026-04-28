@@ -1,22 +1,20 @@
 """SQLite-backed session store.
 
-Single append-only DB. Schema covers item 4 of the day-one build plan
-(`sessions`, `messages`, `tool_calls`, `tool_results`, `governance_decisions`,
-`token_spend`) plus the resilience extensions from item 22:
+Single shared DB. Tables: `sessions`, `messages`, `turns`, `tool_calls`,
+`tool_results`, `governance_decisions`, `token_spend`. Resilience seams
+baked in from day one:
 
-* `messages.delivered_at` → SQLite-backed inbound queue (item 22a).
+* `messages.delivered_at` → SQLite-backed inbound queue.
 * `tool_calls.tool_call_id` UUID + status, with `tool_call` and `tool_result`
-  committed in one transaction (item 22b). Orphaned `tool_call` rows are
-  marked `interrupted` on startup.
-* `turns.started_at` / `ended_at` → mid-turn crash detection (item 22c):
-  any turn with `started_at` but no `ended_at` was interrupted.
+  committed in one transaction. Orphaned `tool_call` rows are marked
+  `interrupted` on startup.
+* `turns.started_at` / `ended_at` → mid-turn crash detection: any turn
+  with `started_at` but no `ended_at` was interrupted.
 
 "Append-only" is the spirit, not the literal: we mutate a small set of
 state-machine columns (`delivered_at`, `turns.ended_at`,
 `tool_calls.status`). Everything else is insert-only.
 """
-
-from __future__ import annotations
 
 import hashlib
 import json
