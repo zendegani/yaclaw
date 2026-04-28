@@ -37,6 +37,7 @@ from pishkar.core.events import (
 )
 from pishkar.core.loop_guard import LoopGuard
 from pishkar.core.messages import InboundMessage
+from pishkar.gateway.hooks import AFTER_LLM, ON_TURN_COMPLETE, HookManager
 from pishkar.providers.base import ModelProvider
 from pishkar.tools.runner import ToolRunner
 
@@ -97,6 +98,7 @@ async def run_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     max_messages: int = DEFAULT_MAX_MESSAGES,
     loop_guard: LoopGuard | None = None,
+    hooks: HookManager | None = None,
 ) -> AsyncIterator[Event]:
     """Drive one turn-of-conversation. Mutates `history` in place."""
 
@@ -215,6 +217,16 @@ async def run_turn(
         )
         yield MessageStop(turn_id=turn_id, session_id=session_id)
 
+        if hooks is not None:
+            hooks.emit(
+                AFTER_LLM,
+                turn_id=turn_id,
+                session_id=session_id,
+                stop_reason=normalized,
+                input_tokens=usage_in,
+                output_tokens=usage_out,
+            )
+
         assistant_msg: dict[str, Any] = {"role": "assistant"}
         if text_buf:
             assistant_msg["content"] = "".join(text_buf)
@@ -233,6 +245,11 @@ async def run_turn(
         history.append(assistant_msg)
 
         if not builders:
+            if hooks is not None:
+                hooks.emit(
+                    ON_TURN_COMPLETE,
+                    turn_id=turn_id, session_id=session_id, stop_reason="end_turn",
+                )
             yield TurnEnd(turn_id=turn_id, session_id=session_id, stop_reason="end_turn")
             return
 
@@ -240,6 +257,12 @@ async def run_turn(
             input_dict = builder.parsed_input()
             if loop_guard is not None:
                 if loop_guard.is_looping(builder.name, input_dict):
+                    if hooks is not None:
+                        hooks.emit(
+                            ON_TURN_COMPLETE,
+                            turn_id=turn_id, session_id=session_id,
+                            stop_reason="loop_detected",
+                        )
                     yield TurnEnd(
                         turn_id=turn_id,
                         session_id=session_id,
@@ -265,6 +288,11 @@ async def run_turn(
                 }
             )
 
+    if hooks is not None:
+        hooks.emit(
+            ON_TURN_COMPLETE,
+            turn_id=turn_id, session_id=session_id, stop_reason="max_turns",
+        )
     yield TurnEnd(turn_id=turn_id, session_id=session_id, stop_reason="max_turns")
 
 

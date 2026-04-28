@@ -19,6 +19,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from pishkar.gateway.hooks import BEFORE_TOOL, ON_TOOL_RESULT, HookManager
 from pishkar.tools.registry import ToolRegistry
 
 DEFAULT_TIMEOUT_S = 30.0
@@ -79,11 +80,13 @@ class SubprocessToolRunner(ToolRunner):
         default_timeout_s: float = DEFAULT_TIMEOUT_S,
         default_max_bytes: int = DEFAULT_MAX_RESULT_BYTES,
         approval_fn: ApprovalFn | None = None,
+        hooks: HookManager | None = None,
     ) -> None:
         self._registry = registry
         self._default_timeout_s = default_timeout_s
         self._default_max_bytes = default_max_bytes
         self._approval_fn = approval_fn
+        self._hooks = hooks
 
     async def run(
         self,
@@ -96,6 +99,20 @@ class SubprocessToolRunner(ToolRunner):
         timeout = timeout_s if timeout_s is not None else self._default_timeout_s
         cap = max_bytes if max_bytes is not None else self._default_max_bytes
 
+        if self._hooks is not None:
+            self._hooks.emit(BEFORE_TOOL, tool_name=tool_name, args=args)
+
+        result = await self._dispatch(tool_name, args, timeout, cap)
+
+        if self._hooks is not None:
+            self._hooks.emit(
+                ON_TOOL_RESULT, tool_name=tool_name, args=args, result=result
+            )
+        return result
+
+    async def _dispatch(
+        self, tool_name: str, args: dict[str, Any], timeout: float, cap: int
+    ) -> ToolResult:
         if self._approval_fn is not None:
             allowed = await self._approval_fn(tool_name, args)
             if not allowed:
@@ -125,11 +142,7 @@ class SubprocessToolRunner(ToolRunner):
             )
 
         text, truncated = _truncate(_to_text(value), cap)
-        return ToolResult(
-            tool_name=tool_name,
-            content=text,
-            truncated=truncated,
-        )
+        return ToolResult(tool_name=tool_name, content=text, truncated=truncated)
 
 
 __all__ = [
