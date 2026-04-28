@@ -18,6 +18,7 @@ session we never run two turns in parallel; across sessions we do.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -85,9 +86,7 @@ class Gateway:
             return
         q: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self._session_queues[session_id] = q
-        self._session_workers[session_id] = asyncio.create_task(
-            self._worker(session_id, q)
-        )
+        self._session_workers[session_id] = asyncio.create_task(self._worker(q))
 
     async def _enqueue(self, msg: InboundMessage) -> None:
         self._ensure_session_worker(msg.session_id)
@@ -100,7 +99,7 @@ class Gateway:
             await self._store.enqueue_inbound(msg)
             await self._enqueue(msg)
 
-    async def _worker(self, session_id: str, q: asyncio.Queue[InboundMessage]) -> None:
+    async def _worker(self, q: asyncio.Queue[InboundMessage]) -> None:
         while True:
             msg = await q.get()
             if msg is _SHUTDOWN:  # type: ignore[comparison-overlap]
@@ -112,10 +111,9 @@ class Gateway:
         try:
             async for event in self._handler(msg):
                 for ch in channels:
-                    try:
+                    # One bad channel can't kill the turn for the others.
+                    with contextlib.suppress(BaseException):
                         await ch.send_event(event)
-                    except BaseException:  # noqa: BLE001 — one bad channel can't kill the turn
-                        pass
         finally:
             await self._store.mark_delivered(msg.message_id)
 
