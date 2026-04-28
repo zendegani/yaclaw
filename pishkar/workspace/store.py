@@ -105,6 +105,18 @@ CREATE TABLE IF NOT EXISTS token_spend (
 );
 CREATE INDEX IF NOT EXISTS idx_token_spend_user_time
     ON token_spend(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS events (
+    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id     TEXT NOT NULL UNIQUE,
+    turn_id      TEXT,
+    session_id   TEXT,
+    type         TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_session_seq
+    ON events(session_id, seq);
 """
 
 
@@ -400,6 +412,55 @@ class SessionStore:
         ) as cur:
             row = await cur.fetchone()
         return (int(row[0]), int(row[1])) if row else (0, 0)
+
+    # --- Event audit log (also: WebSocket reconnect replay) ----------------
+
+    async def append_event(
+        self,
+        *,
+        event_id: str,
+        type: str,
+        payload_json: str,
+        turn_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        await self.db.execute(
+            """INSERT OR IGNORE INTO events(event_id, turn_id, session_id, type,
+                                            payload_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (event_id, turn_id, session_id, type, payload_json, _now_iso()),
+        )
+        await self.db.commit()
+
+    async def events_after(
+        self, session_id: str, after_event_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        if after_event_id is None:
+            sql = (
+                "SELECT event_id, turn_id, session_id, type, payload_json, created_at "
+                "FROM events WHERE session_id = ? ORDER BY seq ASC"
+            )
+            params: tuple[Any, ...] = (session_id,)
+        else:
+            sql = (
+                "SELECT event_id, turn_id, session_id, type, payload_json, created_at "
+                "FROM events WHERE session_id = ? AND seq > "
+                "(SELECT seq FROM events WHERE event_id = ?) ORDER BY seq ASC"
+            )
+            params = (session_id, after_event_id)
+        async with self.db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+        return [
+            {
+                "event_id": r[0],
+                "turn_id": r[1],
+                "session_id": r[2],
+                "type": r[3],
+                "payload_json": r[4],
+                "created_at": r[5],
+            }
+            for r in rows
+        ]
 
 
 __all__ = ["SessionStore", "TrustLevel", "args_hash"]

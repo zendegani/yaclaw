@@ -222,6 +222,8 @@ async def run_turn(
                 AFTER_LLM,
                 turn_id=turn_id,
                 session_id=session_id,
+                user_id=user_message.user_id,
+                model=model,
                 stop_reason=normalized,
                 input_tokens=usage_in,
                 output_tokens=usage_out,
