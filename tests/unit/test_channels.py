@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import os
 
 import pytest
 
@@ -104,7 +105,7 @@ async def test_ws_custom_disconnect_exception() -> None:
         async def receive_text(self) -> str:
             raise CustomDisconnect
 
-        async def send_text(self, data: str) -> None: ...
+        async def send_text(self, _: str) -> None: ...
         async def close(self) -> None: ...
 
     ch = WebSocketChannel(
@@ -172,18 +173,18 @@ async def test_cli_send_event_ignores_unrendered_events() -> None:
 
 async def test_cli_close_stops_inbound_loop() -> None:
     # A blocking stdin we control: pipe + slow drip.
-    rfd, wfd = __import__("os").pipe()
-    stdin = __import__("os").fdopen(rfd, "r")
+    rfd, wfd = os.pipe()
+    stdin = os.fdopen(rfd, "r")
     ch = CLIChannel(user_id="ali", session_id="s", stdin=stdin, stdout=io.StringIO())
 
     async def drain() -> list[str]:
         return [m.content async for m in ch.inbound()]
 
     task = asyncio.create_task(drain())
-    __import__("os").write(wfd, b"hi\n")
+    os.write(wfd, b"hi\n")
     await asyncio.sleep(0.05)
     await ch.close()
-    __import__("os").close(wfd)
+    os.close(wfd)
     msgs = await asyncio.wait_for(task, timeout=1.0)
     assert msgs == ["hi"]
     stdin.close()
