@@ -340,3 +340,10 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/osx,python,node
+
+### Pishkar ###
+secrets.env
+sessions.db
+sessions.db-shm
+sessions.db-wal
+deploy/langfuse-data/

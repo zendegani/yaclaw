@@ -8,13 +8,11 @@ This repo (`yaclaw`) is a **design-stage** project for **Pishkar**, a personal A
 
 When asked to implement something, expect to be creating files from scratch under the layout described in `design.md`. Do not assume any module, class, or test exists until verified.
 
-## The three design documents
+## The design documents
 
-These three files are the source of truth. They are long, internally cross-referenced, and intended to be read together. Always consult them before proposing implementation choices.
-
-- **`architecture.md`** — Comparative analysis of 15 reference agent runtimes ("Claws") across ~20 architectural concerns (execution pattern, agent loop, memory, channels, safety, providers, multi-user identity, triggers, sandboxing, skills, observability, etc.). For each concern it surveys the field, lists trade-offs, and states **Pishkar's adopted approach** with reasoning. This is the "why" document.
-- **`design.md`** — Implementation companion: hexagonal architecture diagram, the concrete `pishkar/` Python module layout, a numbered 22-step day-one build plan, the safety-minima checklist (17 items), explicitly deferred features whose seams are pre-paid, v2 patterns to revisit, and footnotes/caveats. This is the "what to build" document.
-- **`claws.md`** — Single wide comparison table of every reference project against every architectural feature, with Pishkar in the leftmost column. Use for quick lookup of how a given Claw handles a given concern.
+- **`design.md`** — **Primary reference.** Follow this when building. Contains the hexagonal architecture diagram, the concrete `pishkar/` Python module layout, the numbered 22-step day-one build plan, the safety-minima checklist (17 items), explicitly deferred features whose seams are pre-paid, v2 patterns to revisit, and footnotes/caveats.
+- **`architecture.md`** — **Consult when in doubt.** The "why" document: comparative analysis of 15 reference agent runtimes across ~20 architectural concerns, with Pishkar's adopted approach and reasoning for each. Read the relevant section when a `design.md` decision is unclear or you need to understand the trade-offs behind it.
+- **`claws.md`** — **Do not read.** This is the user's personal reference matrix (15 reference projects × every feature). Not needed for implementation.
 
 ## Load-bearing architectural decisions
 
