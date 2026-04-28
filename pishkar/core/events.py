@@ -5,7 +5,7 @@ wrapping the multi-message agent loop and `tool_result` injected after each
 tool call. The TypeScript client mirror is generated from these models.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Union
 from uuid import uuid4
 
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _uuid() -> str:
