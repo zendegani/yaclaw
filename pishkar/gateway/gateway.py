@@ -53,11 +53,25 @@ class Gateway:
         return self._hooks
 
     def attach_channel(self, session_id: str, channel: Channel) -> None:
-        self._channels.setdefault(session_id, []).append(channel)
-        self._ensure_session_worker(session_id)
+        """Register `channel` for outbound fan-out *and* pump its
+        `inbound()` into the queue. Use `register_channel` when the
+        caller wants to pump inbound itself (e.g. a WebSocket endpoint
+        that needs to detect disconnect)."""
+        self.register_channel(session_id, channel)
         task = asyncio.create_task(self._pump(channel))
         self._pump_tasks.add(task)
         task.add_done_callback(self._pump_tasks.discard)
+
+    def register_channel(self, session_id: str, channel: Channel) -> None:
+        """Register `channel` for outbound fan-out only. Caller is
+        responsible for pumping inbound (typically via `submit`)."""
+        self._channels.setdefault(session_id, []).append(channel)
+        self._ensure_session_worker(session_id)
+
+    def detach_channel(self, session_id: str, channel: Channel) -> None:
+        chans = self._channels.get(session_id)
+        if chans and channel in chans:
+            chans.remove(channel)
 
     async def submit(self, msg: InboundMessage) -> None:
         """Inject a message directly (used by triggers)."""

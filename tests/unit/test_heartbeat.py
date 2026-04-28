@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pishkar.core.messages import InboundMessage
-from pishkar.triggers.base import TriggerSource
+from pishkar.triggers.base import Submit, TriggerSource
 from pishkar.triggers.heartbeat import HeartbeatTrigger
 
 
@@ -12,7 +12,7 @@ def _write_cron(path: Path, tasks: list[dict]) -> None:
     path.write_text(json.dumps(tasks))
 
 
-def _collector() -> tuple[list[InboundMessage], "object"]:
+def _collector() -> tuple[list[InboundMessage], Submit]:
     captured: list[InboundMessage] = []
 
     async def submit(msg: InboundMessage) -> None:
