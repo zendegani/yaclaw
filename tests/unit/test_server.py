@@ -103,6 +103,41 @@ def test_session_isolation_across_sockets(app) -> None:
             assert all("for-s1" not in json.dumps(e) for e in events)
 
 
+def test_handler_exception_yields_turn_end_error_and_keeps_worker_alive(
+    tmp_path: Path,
+) -> None:
+    calls = {"n": 0}
+
+    def flaky(msg: InboundMessage) -> AsyncIterator[Event]:
+        async def gen() -> AsyncIterator[Event]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("provider 429")
+            yield TurnStart(
+                turn_id=msg.message_id, session_id=msg.session_id, turn_index=0
+            )
+            yield TurnEnd(
+                turn_id=msg.message_id,
+                session_id=msg.session_id,
+                stop_reason="end_turn",
+            )
+
+        return gen()
+
+    store = SessionStore(tmp_path / "sessions.db")
+    app = create_app(store=store, handler=flaky)
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/ali/s1") as ws:
+            ws.send_text(json.dumps({"content": "boom"}))
+            first = _drain_until(ws, "turn_end")
+            assert first[-1]["stop_reason"] == "error"
+
+            # Worker is still alive — second message gets a normal turn.
+            ws.send_text(json.dumps({"content": "again"}))
+            second = _drain_until(ws, "turn_end")
+            assert second[-1]["stop_reason"] == "end_turn"
+
+
 def test_invalid_inbound_json_is_ignored(app) -> None:
     with TestClient(app) as client:
         with client.websocket_connect("/ws/ali/s1") as ws:

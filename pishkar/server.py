@@ -16,10 +16,13 @@ tests can substitute a deterministic stub and `__main__` can wire the
 real LiteLLM-backed loop.
 """
 
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -129,7 +132,12 @@ def _make_control_handler(
 def _wrap_handler(handler: Handler, sink: SqliteSink) -> Handler:
     """Echo the user's message as an event, then tee every assistant
     event through the always-on SQLite log so replay rebuilds the full
-    chat (user side included)."""
+    chat (user side included).
+
+    A handler exception (e.g. provider 429, network blip) is converted
+    into a `TurnEnd(stop_reason="error")` so the UI sees the turn close
+    and the gateway worker stays alive for the next message.
+    """
 
     def wrapped(msg: InboundMessage) -> AsyncIterator[Event]:
         async def gen() -> AsyncIterator[Event]:
@@ -140,9 +148,19 @@ def _wrap_handler(handler: Handler, sink: SqliteSink) -> Handler:
             )
             await sink.write_event(user_event)
             yield user_event
-            async for event in handler(msg):
-                await sink.write_event(event)
-                yield event
+            try:
+                async for event in handler(msg):
+                    await sink.write_event(event)
+                    yield event
+            except Exception:
+                logger.exception("handler failed for session %s", msg.session_id)
+                err_event = TurnEnd(
+                    turn_id="",
+                    session_id=msg.session_id,
+                    stop_reason="error",
+                )
+                await sink.write_event(err_event)
+                yield err_event
 
         return gen()
 

@@ -19,8 +19,11 @@ session we never run two turns in parallel; across sessions we do.
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from pishkar.channels.base import Channel
 from pishkar.core.events import Event
@@ -118,7 +121,14 @@ class Gateway:
             msg = await q.get()
             if msg is _SHUTDOWN:  # type: ignore[comparison-overlap]
                 return
-            await self._dispatch(msg)
+            try:
+                await self._dispatch(msg)
+            except Exception:
+                # A dispatch failure must not kill the per-session
+                # worker — that would freeze the session until restart.
+                logger.exception(
+                    "dispatch failed for session %s", msg.session_id
+                )
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         channels = list(self._channels.get(msg.session_id, []))
