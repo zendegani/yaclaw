@@ -154,11 +154,23 @@ def _default_handler(msg: InboundMessage) -> AsyncIterator[Event]:
 
 
 def main() -> None:
+    import os
+
     import uvicorn
 
     db_path = Path.home() / ".pishkar" / "sessions.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     store = SessionStore(db_path)
-    app = create_app(store=store, handler=_default_handler)
+
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"):
+        from pishkar.runtime import build_default_provider, build_handler
+
+        provider, model = build_default_provider()
+        handler = build_handler(provider=provider, model=model)
+    else:
+        handler = _default_handler  # echo stub keeps the server bootable offline
+
+    app = create_app(store=store, handler=handler)
     uvicorn.run(app, host="127.0.0.1", port=8765)
 
 
