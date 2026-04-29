@@ -162,7 +162,11 @@ def main() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     store = SessionStore(db_path)
 
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"):
+    has_key = any(
+        os.environ.get(k)
+        for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+    )
+    if has_key:
         from pishkar.runtime import build_default_provider, build_handler
 
         provider, model = build_default_provider()

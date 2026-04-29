@@ -70,20 +70,25 @@ def _default_registry() -> ToolRegistry:
 def build_default_provider() -> tuple[ModelProvider, str]:
     """Construct the production LiteLLM router from environment.
 
-    Looks at `PISHKAR_MODEL` (default `claude-opus-4-7`). Anthropic + OpenAI
-    keys are read by litellm itself from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+    Picks a default model based on which `*_API_KEY` is present (override
+    with `PISHKAR_MODEL`). litellm reads the key envs itself.
     """
-    model = os.environ.get("PISHKAR_MODEL", "claude-opus-4-7")
+    model = os.environ.get("PISHKAR_MODEL") or _default_model_for_env()
     model_list: list[dict[str, Any]] = [
         {"model_name": model, "litellm_params": {"model": _litellm_name(model)}},
     ]
-    if os.environ.get("OPENAI_API_KEY"):
-        model_list.append(
-            {"model_name": "gpt-4o-mini", "litellm_params": {"model": "openai/gpt-4o-mini"}},
-        )
-    fallbacks = [{model: ["gpt-4o-mini"]}] if len(model_list) > 1 else None
-    completion = build_router_completion(model_list, fallbacks=fallbacks)
+    completion = build_router_completion(model_list)
     return LiteLLMProvider(completion), model
+
+
+def _default_model_for_env() -> str:
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "claude-opus-4-7"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "gpt-4o-mini"
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return "gemini-2.5-pro"
+    return "claude-opus-4-7"
 
 
 def _litellm_name(model: str) -> str:
@@ -91,6 +96,8 @@ def _litellm_name(model: str) -> str:
         return model if model.startswith("anthropic/") else f"anthropic/{model}"
     if model.startswith(("gpt-", "openai/")):
         return model if model.startswith("openai/") else f"openai/{model}"
+    if model.startswith(("gemini-", "gemini/")):
+        return model if model.startswith("gemini/") else f"gemini/{model}"
     return model
 
 
