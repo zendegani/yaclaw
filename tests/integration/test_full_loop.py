@@ -179,6 +179,46 @@ def test_replay_after_reconnect_includes_tool_events(tmp_path: Path) -> None:
     assert types[-1] == "turn_end"
 
 
+def test_recovery_injects_notice_after_simulated_crash(tmp_path: Path) -> None:
+    """Pre-seed an interrupted turn into the DB; the next inbound on
+    that session must see the recovery notice in the system prompt."""
+    import asyncio
+
+    from pishkar.core.events import TurnStart
+    from pishkar.observability.sqlite_sink import SqliteSink
+
+    db_path = tmp_path / "sessions.db"
+
+    async def _seed_orphan() -> None:
+        store = SessionStore(db_path)
+        await store.open()
+        sink = SqliteSink(store)
+        await sink.write_event(TurnStart(turn_id="dead-turn", session_id="s1", turn_index=0))
+        # No TurnEnd → counts as interrupted.
+        await store.close()
+
+    asyncio.run(_seed_orphan())
+
+    provider = MockLiteLLMProvider([[
+        ProviderChunk(text="ok"), ProviderChunk(stop_reason="stop"),
+    ]])
+    interrupted: set[str] = set()
+    store = SessionStore(db_path)
+    handler = build_handler(
+        provider=provider,
+        model="m",
+        system="BASE",
+        interrupted_sessions=interrupted,
+    )
+    app = create_app(store=store, handler=handler, recovery_target=interrupted)
+
+    with TestClient(app) as client, client.websocket_connect("/ws/ali/s1") as ws:
+        ws.send_text(json.dumps({"content": "hello"}))
+        _drain_until(ws, "turn_end")
+
+    assert "Recovery notice" in (provider.observed_systems[0] or "")
+
+
 def test_workspace_files_appear_in_system_prompt(tmp_path: Path) -> None:
     from pishkar.runtime import build_handler
     from pishkar.workspace.loader import WorkspaceLoader

@@ -25,6 +25,7 @@ from pishkar.tools.http import http
 from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
 from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
+from pishkar.workspace.store import SessionStore
 
 DEFAULT_SYSTEM = (
     "You are Pishkar, a personal AI butler. Be concise and direct. "
@@ -41,11 +42,13 @@ def build_handler(
     hooks: HookManager | None = None,
     system: str = DEFAULT_SYSTEM,
     workspace_loader: WorkspaceLoader | None = None,
+    interrupted_sessions: set[str] | None = None,
 ) -> Handler:
     registry = registry or _default_registry()
     runner = runner or SubprocessToolRunner(registry, hooks=hooks)
     histories: dict[str, list[dict[str, Any]]] = {}
     tool_schemas = registry.schemas("openai")
+    interrupted = interrupted_sessions if interrupted_sessions is not None else set()
 
     def handler(msg: InboundMessage) -> AsyncIterator[Event]:
         history = histories.setdefault(msg.session_id, [])
@@ -56,6 +59,16 @@ def build_handler(
             turn_system = compose_system_prompt(ws, base=system)
         else:
             turn_system = system
+        if msg.session_id in interrupted:
+            turn_system = (
+                turn_system
+                + "\n\n# Recovery notice\n\n"
+                + "The previous turn in this session was interrupted before it "
+                + "completed (server crash, restart, or kill). Decide whether to "
+                + "retry the prior request, abandon it, or just acknowledge — the "
+                + "user has not been told."
+            )
+            interrupted.discard(msg.session_id)
         return run_turn(
             user_message=msg,
             history=history,
@@ -68,6 +81,38 @@ def build_handler(
         )
 
     return handler
+
+
+async def recover_on_startup(store: SessionStore) -> dict[str, Any]:
+    """Sweep the DB for state left behind by a crash.
+
+    Marks orphaned `tool_call` rows (status `pending`, no `tool_result`)
+    as `interrupted`, and finds turns whose `started_at` has no
+    `ended_at`. Returns the set of session ids that had an interrupted
+    turn so the next inbound on each gets a recovery system note.
+    """
+    interrupted_tool_calls = await store.mark_orphan_tool_calls_interrupted()
+    interrupted_turn_ids = await store.find_interrupted_turns()
+    sessions: set[str] = set()
+    for turn_id in interrupted_turn_ids:
+        sid = await _session_id_for_turn(store, turn_id)
+        if sid:
+            sessions.add(sid)
+        # Stamp the turn so we don't re-flag it on the next restart.
+        await store.end_turn(turn_id, "interrupted")
+    return {
+        "interrupted_tool_calls": interrupted_tool_calls,
+        "interrupted_turn_ids": interrupted_turn_ids,
+        "interrupted_sessions": sessions,
+    }
+
+
+async def _session_id_for_turn(store: SessionStore, turn_id: str) -> str | None:
+    async with store.db.execute(
+        "SELECT session_id FROM turns WHERE turn_id = ?", (turn_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else None
 
 
 def _default_registry() -> ToolRegistry:
@@ -110,4 +155,9 @@ def _litellm_name(model: str) -> str:
     return model
 
 
-__all__ = ["build_handler", "build_default_provider", "DEFAULT_SYSTEM"]
+__all__ = [
+    "DEFAULT_SYSTEM",
+    "build_default_provider",
+    "build_handler",
+    "recover_on_startup",
+]

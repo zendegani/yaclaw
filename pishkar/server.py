@@ -41,6 +41,7 @@ def create_app(
     store: SessionStore,
     handler: Handler,
     hooks: HookManager | None = None,
+    recovery_target: set[str] | None = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -51,6 +52,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await store.open()
+        if recovery_target is not None:
+            from pishkar.runtime import recover_on_startup
+
+            report = await recover_on_startup(store)
+            recovery_target.update(report["interrupted_sessions"])
         await gateway.start()
         try:
             yield
@@ -166,6 +172,7 @@ def main() -> None:
         os.environ.get(k)
         for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
     )
+    interrupted: set[str] = set()
     if has_key:
         from pishkar.runtime import build_default_provider, build_handler
         from pishkar.workspace.loader import WorkspaceLoader
@@ -173,11 +180,16 @@ def main() -> None:
         loader = WorkspaceLoader(base_dir=db_path.parent)
         loader.ensure_starter(os.environ.get("PISHKAR_USER", "ali"))
         provider, model = build_default_provider()
-        handler = build_handler(provider=provider, model=model, workspace_loader=loader)
+        handler = build_handler(
+            provider=provider,
+            model=model,
+            workspace_loader=loader,
+            interrupted_sessions=interrupted,
+        )
     else:
         handler = _default_handler  # echo stub keeps the server bootable offline
 
-    app = create_app(store=store, handler=handler)
+    app = create_app(store=store, handler=handler, recovery_target=interrupted)
     uvicorn.run(app, host="127.0.0.1", port=8765)
 
 
