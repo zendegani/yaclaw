@@ -83,7 +83,8 @@ def create_app(
         last_event_id: str | None = Query(default=None),
     ) -> None:
         await socket.accept()
-        await _replay(socket, store, session_id, last_event_id)
+        if not await _replay(socket, store, session_id, last_event_id):
+            return  # client went away mid-replay; nothing more to do
         channel = WebSocketChannel(
             _StarletteSocketAdapter(socket),
             user_id=user_id,
@@ -172,10 +173,20 @@ async def _replay(
     store: SessionStore,
     session_id: str,
     last_event_id: str | None,
-) -> None:
+) -> bool:
+    """Stream past events to a freshly-connected socket.
+
+    Returns False if the client disconnected mid-replay (StrictMode
+    double-mount, page refresh, sleep wake) so the caller can bail out
+    cleanly instead of trying to attach a dead channel.
+    """
     rows = await store.events_after(session_id, after_event_id=last_event_id)
     for row in rows:
-        await socket.send_text(row["payload_json"])
+        try:
+            await socket.send_text(row["payload_json"])
+        except WebSocketDisconnect:
+            return False
+    return True
 
 
 class _StarletteSocketAdapter:

@@ -138,6 +138,39 @@ def test_handler_exception_yields_turn_end_error_and_keeps_worker_alive(
             assert second[-1]["stop_reason"] == "end_turn"
 
 
+async def test_replay_returns_false_on_client_disconnect(tmp_path: Path) -> None:
+    from fastapi import WebSocketDisconnect
+
+    from pishkar.server import _replay
+
+    store = SessionStore(tmp_path / "sessions.db")
+    await store.open()
+    try:
+        # Two events to replay; the fake socket dies on the first send.
+        for i, event_id in enumerate(("e1", "e2")):
+            await store.append_event(
+                event_id=event_id,
+                type="turn_end",
+                payload_json=json.dumps({"event_id": event_id}),
+                turn_id=None,
+                session_id="s1",
+            )
+
+        class _DeadSocket:
+            sent = 0
+
+            async def send_text(self, _: str) -> None:
+                self.sent += 1
+                raise WebSocketDisconnect(code=1001)
+
+        sock = _DeadSocket()
+        ok = await _replay(sock, store, "s1", last_event_id=None)
+        assert ok is False
+        assert sock.sent == 1  # bailed on the first failing send
+    finally:
+        await store.close()
+
+
 def test_invalid_inbound_json_is_ignored(app) -> None:
     with TestClient(app) as client:
         with client.websocket_connect("/ws/ali/s1") as ws:
