@@ -102,3 +102,34 @@ class WorkspaceLoader:
 
     def write(self, user_id: str, file: WorkspaceFile, content: str) -> None:
         atomic_write_text(self.user_root(user_id) / f"{file}.md", content)
+
+    def ensure_starter(self, user_id: str) -> Workspace:
+        """Seed missing workspace files from the bundled starter pack.
+
+        Idempotent: existing files are never overwritten — Pishkar (and the
+        user) own those once written. Returns the loaded workspace."""
+        starter_dir = Path(__file__).parent / "starter"
+        root = self.user_root(user_id)
+        root.mkdir(parents=True, exist_ok=True)
+        for name in _FILES:
+            target = root / f"{name}.md"
+            if target.exists():
+                continue
+            template = starter_dir / f"{name}.md"
+            if template.is_file():
+                atomic_write_text(target, template.read_text(encoding="utf-8"))
+        return self.load(user_id)
+
+
+def compose_system_prompt(ws: Workspace, *, base: str) -> str:
+    """Stitch SOUL.md + USER.md into the system prompt.
+
+    SOUL is the persona and operating instructions; USER is the live
+    user-context document the agent both reads and writes. Empty sections
+    are skipped so a brand-new workspace doesn't waste tokens on headers."""
+    parts = [base.strip()] if base.strip() else []
+    if ws.soul.strip():
+        parts.append("# Persona (SOUL.md)\n\n" + ws.soul.strip())
+    if ws.user.strip():
+        parts.append("# About the user (USER.md)\n\n" + ws.user.strip())
+    return "\n\n".join(parts)

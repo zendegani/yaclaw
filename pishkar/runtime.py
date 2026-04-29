@@ -24,6 +24,7 @@ from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
 from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
+from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
 
 DEFAULT_SYSTEM = (
     "You are Pishkar, a personal AI butler. Be concise and direct. "
@@ -39,6 +40,7 @@ def build_handler(
     runner: SubprocessToolRunner | None = None,
     hooks: HookManager | None = None,
     system: str = DEFAULT_SYSTEM,
+    workspace_loader: WorkspaceLoader | None = None,
 ) -> Handler:
     registry = registry or _default_registry()
     runner = runner or SubprocessToolRunner(registry, hooks=hooks)
@@ -47,13 +49,20 @@ def build_handler(
 
     def handler(msg: InboundMessage) -> AsyncIterator[Event]:
         history = histories.setdefault(msg.session_id, [])
+        # Re-read the workspace per turn so edits the agent makes to
+        # USER.md take effect on the next turn without a server restart.
+        if workspace_loader is not None:
+            ws = workspace_loader.load(msg.user_id)
+            turn_system = compose_system_prompt(ws, base=system)
+        else:
+            turn_system = system
         return run_turn(
             user_message=msg,
             history=history,
             provider=provider,
             runner=runner,
             tool_schemas=tool_schemas,
-            system=system,
+            system=turn_system,
             model=model,
             hooks=hooks,
         )

@@ -168,9 +168,12 @@ def main() -> None:
     )
     if has_key:
         from pishkar.runtime import build_default_provider, build_handler
+        from pishkar.workspace.loader import WorkspaceLoader
 
+        loader = WorkspaceLoader(base_dir=db_path.parent)
+        loader.ensure_starter(os.environ.get("PISHKAR_USER", "ali"))
         provider, model = build_default_provider()
-        handler = build_handler(provider=provider, model=model)
+        handler = build_handler(provider=provider, model=model, workspace_loader=loader)
     else:
         handler = _default_handler  # echo stub keeps the server bootable offline
 

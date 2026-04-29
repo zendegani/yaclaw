@@ -28,6 +28,7 @@ class MockLiteLLMProvider(ModelProvider):
         self._scripts = scripts
         self.calls = 0
         self.observed_messages: list[list[dict[str, Any]]] = []
+        self.observed_systems: list[str | None] = []
 
     async def stream(
         self,
@@ -40,6 +41,7 @@ class MockLiteLLMProvider(ModelProvider):
         user_id: str | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         self.observed_messages.append([dict(m) for m in messages])
+        self.observed_systems.append(system)
         chunks = self._scripts[self.calls]
         self.calls += 1
         for c in chunks:
@@ -175,6 +177,35 @@ def test_replay_after_reconnect_includes_tool_events(tmp_path: Path) -> None:
     types = [e["type"] for e in replayed]
     assert "tool_result" in types
     assert types[-1] == "turn_end"
+
+
+def test_workspace_files_appear_in_system_prompt(tmp_path: Path) -> None:
+    from pishkar.runtime import build_handler
+    from pishkar.workspace.loader import WorkspaceLoader
+
+    loader = WorkspaceLoader(base_dir=tmp_path)
+    loader.ensure_starter("ali")
+    (tmp_path / "users" / "ali" / "USER.md").write_text("User lives in Tehran.")
+
+    provider = MockLiteLLMProvider([[
+        ProviderChunk(text="ok"), ProviderChunk(stop_reason="stop"),
+    ]])
+    store = SessionStore(tmp_path / "sessions.db")
+    handler = build_handler(
+        provider=provider,
+        model="m",
+        system="BASE SYSTEM",
+        workspace_loader=loader,
+    )
+    app = create_app(store=store, handler=handler)
+    with TestClient(app) as client, client.websocket_connect("/ws/ali/s1") as ws:
+        ws.send_text(json.dumps({"content": "hi"}))
+        _drain_until(ws, "turn_end")
+
+    blob = provider.observed_systems[0] or ""
+    assert "BASE SYSTEM" in blob
+    assert "Pishkar" in blob  # from SOUL.md
+    assert "Tehran" in blob   # from USER.md
 
 
 @pytest.mark.parametrize("session_a,session_b", [("s1", "s2")])
