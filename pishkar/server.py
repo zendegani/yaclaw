@@ -16,10 +16,12 @@ tests can substitute a deterministic stub and `__main__` can wire the
 real LiteLLM-backed loop.
 """
 
+import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Protocol
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,20 @@ from pishkar.workspace.store import SessionStore
 HandlerFactory = Callable[[], Handler]
 
 
+class ChannelRunner(Protocol):
+    """Lifecycle hook for a channel that owns its own transport (e.g.
+    a Telegram bot polling loop). The lifespan starts each runner after
+    the gateway is ready and stops them in reverse on shutdown."""
+
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+
+
+ChannelRunnerFactory = Callable[
+    [Gateway, ApprovalRouter | None], list[ChannelRunner]
+]
+
+
 def create_app(
     *,
     store: SessionStore,
@@ -48,12 +64,18 @@ def create_app(
     hooks: HookManager | None = None,
     recovery_target: set[str] | None = None,
     approval_router: ApprovalRouter | None = None,
+    channel_runner_factory: ChannelRunnerFactory | None = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
     sink.attach(hooks)
 
     gateway = Gateway(store=store, handler=_wrap_handler(handler, sink), hooks=hooks)
+    runners: list[ChannelRunner] = (
+        channel_runner_factory(gateway, approval_router)
+        if channel_runner_factory is not None
+        else []
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -64,9 +86,14 @@ def create_app(
             report = await recover_on_startup(store)
             recovery_target.update(report["interrupted_sessions"])
         await gateway.start()
+        for runner in runners:
+            await runner.start()
         try:
             yield
         finally:
+            for runner in reversed(runners):
+                with contextlib.suppress(Exception):
+                    await runner.stop()
             await gateway.stop()
             await store.close()
 
@@ -268,12 +295,55 @@ def main() -> None:
         handler=handler,
         recovery_target=interrupted,
         approval_router=approval_router,
+        channel_runner_factory=_telegram_factory_from_env(
+            user_id=os.environ.get("PISHKAR_USER", "ali"),
+        ),
     )
     uvicorn.run(app, host="127.0.0.1", port=8765)
+
+
+def _telegram_factory_from_env(*, user_id: str):
+    """Return a channel-runner factory if `TELEGRAM_BOT_TOKEN` is set,
+    otherwise None. The runner is constructed lazily inside `create_app`
+    so it can take the gateway built there."""
+    import os
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    owner_raw = os.environ.get("TELEGRAM_OWNER_ID")
+    if not token or not owner_raw:
+        return None
+    try:
+        owner_id = int(owner_raw)
+    except ValueError:
+        logger.warning("TELEGRAM_OWNER_ID must be an integer; got %r", owner_raw)
+        return None
+
+    def factory(
+        gateway: Gateway, approval_router: ApprovalRouter | None
+    ) -> list[ChannelRunner]:
+        from pishkar.channels.telegram import TelegramBotRunner
+
+        return [
+            TelegramBotRunner(
+                token=token,
+                owner_id=owner_id,
+                user_id=user_id,
+                gateway=gateway,
+                approval_router=approval_router,
+            )
+        ]
+
+    return factory
 
 
 if __name__ == "__main__":
     main()
 
 
-__all__ = ["HandlerFactory", "create_app", "main"]
+__all__ = [
+    "ChannelRunner",
+    "ChannelRunnerFactory",
+    "HandlerFactory",
+    "create_app",
+    "main",
+]
