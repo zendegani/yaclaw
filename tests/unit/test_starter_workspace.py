@@ -49,9 +49,19 @@ def test_compose_system_prompt_stitches_soul_and_user() -> None:
     assert prompt.index("PERSONA") < prompt.index("FACTS")
 
 
-def test_compose_system_prompt_skips_empty_sections() -> None:
+def test_compose_system_prompt_skips_empty_persona_and_user_sections() -> None:
     ws = Workspace(user_id="ali", root=Path("/x"))
     prompt = compose_system_prompt(ws, base="BASE")
-    assert prompt == "BASE"
-    assert "SOUL" not in prompt
-    assert "USER.md" not in prompt
+    # Workspace section is always present so the agent has the path.
+    assert "BASE" in prompt
+    assert "/x" in prompt
+    # But empty SOUL/USER bodies are not rendered as headers.
+    assert "Persona" not in prompt
+    assert "About the user" not in prompt
+
+
+def test_compose_system_prompt_includes_workspace_path() -> None:
+    ws = Workspace(user_id="ali", root=Path("/home/ali/.pishkar/users/ali"))
+    prompt = compose_system_prompt(ws, base="BASE")
+    assert "/home/ali/.pishkar/users/ali" in prompt
+    assert "absolute paths" in prompt

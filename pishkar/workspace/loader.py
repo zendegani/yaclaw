@@ -126,8 +126,20 @@ def compose_system_prompt(ws: Workspace, *, base: str) -> str:
 
     SOUL is the persona and operating instructions; USER is the live
     user-context document the agent both reads and writes. Empty sections
-    are skipped so a brand-new workspace doesn't waste tokens on headers."""
+    are skipped so a brand-new workspace doesn't waste tokens on headers.
+
+    The absolute workspace path is included so the agent uses fully
+    qualified paths when calling `read_file` / `write_file` — tools
+    resolve paths against the server's CWD, not the workspace root."""
     parts = [base.strip()] if base.strip() else []
+    parts.append(
+        "# Workspace\n\n"
+        f"Your workspace lives at: `{ws.root}`\n"
+        "Always use absolute paths under this directory when calling "
+        "`read_file` / `write_file` (e.g. "
+        f"`{ws.root / 'USER.md'}`). The four files SOUL.md, USER.md, "
+        "HEARTBEAT.md, AGENTS.md already exist there."
+    )
     if ws.soul.strip():
         parts.append("# Persona (SOUL.md)\n\n" + ws.soul.strip())
     if ws.user.strip():

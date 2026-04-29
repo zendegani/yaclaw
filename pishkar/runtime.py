@@ -141,7 +141,7 @@ def _default_model_for_env() -> str:
     if os.environ.get("OPENAI_API_KEY"):
         return "gpt-4o-mini"
     if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return "gemini-2.5-pro"
+        return "gemini-3-flash-preview"
     return "claude-opus-4-7"
 
 
