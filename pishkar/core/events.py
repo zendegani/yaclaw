@@ -138,6 +138,19 @@ class ApprovalRequest(_EventBase):
     input: dict[str, Any]
 
 
+class UserMessage(_EventBase):
+    """Echo of an inbound user message, persisted to the event log so a
+    reconnecting client can rebuild the full chat from replay alone.
+
+    `turn_id` is empty — user messages aren't owned by an assistant turn.
+    """
+
+    type: Literal["user_message"] = "user_message"
+    turn_id: str = ""
+    message_id: str
+    content: str
+
+
 Event = Annotated[
     Union[
         TurnStart,
@@ -150,6 +163,7 @@ Event = Annotated[
         ToolResult,
         TurnEnd,
         ApprovalRequest,
+        UserMessage,
     ],
     Field(discriminator="type"),
 ]

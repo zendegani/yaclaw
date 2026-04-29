@@ -54,8 +54,9 @@ def test_websocket_round_trip(app) -> None:
             events = _drain_until(ws, "turn_end")
 
     types = [e["type"] for e in events]
-    assert types == ["turn_start", "content_block_delta", "turn_end"]
-    assert events[1]["delta"]["text"] == "echo:hello"
+    assert types == ["user_message", "turn_start", "content_block_delta", "turn_end"]
+    assert events[0]["content"] == "hello"
+    assert events[2]["delta"]["text"] == "echo:hello"
 
 
 def test_events_are_persisted_and_replayed_on_reconnect(app, tmp_path: Path) -> None:
@@ -68,7 +69,7 @@ def test_events_are_persisted_and_replayed_on_reconnect(app, tmp_path: Path) -> 
         with client.websocket_connect("/ws/ali/s1") as ws:
             replay = _drain_until(ws, "turn_end")
             assert [e["type"] for e in replay] == [
-                "turn_start", "content_block_delta", "turn_end"
+                "user_message", "turn_start", "content_block_delta", "turn_end"
             ]
 
 

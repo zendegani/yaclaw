@@ -1,10 +1,11 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { Activity, LayoutDashboard, MessageSquare, Settings } from "lucide-react";
+import { Activity, LayoutDashboard, MessageSquare, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatState, dismissApproval } from "@/state/store";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
-import { useSocket } from "@/App";
+import { Button } from "@/components/ui/button";
+import { useSocket, newSession, getSessionId } from "@/App";
 import type { ApprovalDecision } from "@/api/events";
 
 const NAV = [
@@ -31,6 +32,17 @@ export function AppShell() {
           <span className="flex-1">Pishkar</span>
           <ThemeToggle />
         </div>
+        <div className="px-2 pb-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full justify-start"
+            onClick={newSession}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New session
+          </Button>
+        </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
           {NAV.map(({ to, label, icon: Icon, end }) => (
             <NavLink
@@ -51,7 +63,7 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-sidebar-border p-3 text-xs text-muted-foreground">
+        <div className="space-y-1 border-t border-sidebar-border p-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <span
               className={cn(
@@ -62,6 +74,9 @@ export function AppShell() {
               )}
             />
             <span className="capitalize">{status}</span>
+          </div>
+          <div className="truncate font-mono text-[10px]" title={getSessionId()}>
+            session: {getSessionId().slice(0, 8)}
           </div>
         </div>
       </aside>

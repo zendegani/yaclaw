@@ -26,7 +26,7 @@ from starlette.websockets import WebSocketState
 
 from pishkar.channels.ws import WebSocketChannel
 from pishkar.channels.ws import WebSocketDisconnect as ChannelWebSocketDisconnect
-from pishkar.core.events import Event, TurnEnd, TurnStart
+from pishkar.core.events import Event, TurnEnd, TurnStart, UserMessage
 from pishkar.core.messages import InboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway, Handler
@@ -127,10 +127,19 @@ def _make_control_handler(
 
 
 def _wrap_handler(handler: Handler, sink: SqliteSink) -> Handler:
-    """Tee every event through the always-on SQLite event log."""
+    """Echo the user's message as an event, then tee every assistant
+    event through the always-on SQLite log so replay rebuilds the full
+    chat (user side included)."""
 
     def wrapped(msg: InboundMessage) -> AsyncIterator[Event]:
         async def gen() -> AsyncIterator[Event]:
+            user_event = UserMessage(
+                session_id=msg.session_id,
+                message_id=msg.message_id,
+                content=msg.content,
+            )
+            await sink.write_event(user_event)
+            yield user_event
             async for event in handler(msg):
                 await sink.write_event(event)
                 yield event

@@ -16,7 +16,7 @@ export interface AssistantTurn {
   endedAt?: number;
 }
 
-export interface UserMessage { kind: "user"; content: string; ts: number }
+export interface UserMessage { kind: "user"; content: string; ts: number; message_id?: string }
 export interface AssistantMessage { kind: "assistant"; turn: AssistantTurn }
 export type ChatItem = UserMessage | AssistantMessage;
 
@@ -132,6 +132,24 @@ export function applyEvent(event: Event): void {
       setState({ ...state, items: [...next], raw, totals });
       return;
     }
+    case "user_message": {
+      // Echoed by the server so a fresh client (or one reconnecting via
+      // replay) sees the user's own messages. Drop the duplicate if we
+      // already appended optimistically.
+      const exists = items.some(
+        (it) => it.kind === "user" && it.message_id === event.message_id,
+      );
+      if (exists) {
+        setState({ ...state, raw, totals });
+        return;
+      }
+      const next: ChatItem[] = [
+        ...items,
+        { kind: "user", content: event.content, ts: Date.now(), message_id: event.message_id },
+      ];
+      setState({ ...state, items: next, raw, totals });
+      return;
+    }
     case "approval_request": {
       const approvals = [
         ...state.approvals,
@@ -155,8 +173,11 @@ export function applyEvent(event: Event): void {
   }
 }
 
-export function appendUserMessage(content: string): void {
-  setState({ ...state, items: [...state.items, { kind: "user", content, ts: Date.now() }] });
+export function appendUserMessage(content: string, message_id?: string): void {
+  setState({
+    ...state,
+    items: [...state.items, { kind: "user", content, ts: Date.now(), message_id }],
+  });
 }
 
 export function setStatus(status: State["status"]): void {

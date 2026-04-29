@@ -46,6 +46,11 @@ export interface ApprovalRequest extends EventBase {
   tool_name: string;
   input: Record<string, unknown>;
 }
+export interface UserMessageEvent extends EventBase {
+  type: "user_message";
+  message_id: string;
+  content: string;
+}
 
 export type Event =
   | TurnStart
@@ -57,7 +62,8 @@ export type Event =
   | MessageStop
   | ToolResult
   | TurnEnd
-  | ApprovalRequest;
+  | ApprovalRequest
+  | UserMessageEvent;
 
 export type ApprovalDecision = "allow_once" | "allow_session" | "deny";
 

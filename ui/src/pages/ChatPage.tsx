@@ -22,8 +22,9 @@ export function ChatPage() {
   const send = () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    socket.send(trimmed);
-    appendUserMessage(trimmed);
+    const messageId = crypto.randomUUID();
+    socket.send(trimmed, messageId);
+    appendUserMessage(trimmed, messageId);
     setDraft("");
   };
 

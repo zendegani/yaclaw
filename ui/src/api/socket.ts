@@ -49,8 +49,8 @@ export class PishkarSocket {
     };
   }
 
-  send(content: string): void {
-    const payload: InboundMessage = { content };
+  send(content: string, messageId?: string): void {
+    const payload: InboundMessage = { content, message_id: messageId };
     this.ws?.send(JSON.stringify(payload));
   }
 

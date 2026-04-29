@@ -9,7 +9,25 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 
 const USER_ID = "ali";
-const SESSION_ID = "s-default";
+const SESSION_KEY = "pishkar.session_id";
+
+function currentSessionId(): string {
+  let id = localStorage.getItem(SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(SESSION_KEY, id);
+  }
+  return id;
+}
+
+export function newSession(): void {
+  localStorage.setItem(SESSION_KEY, crypto.randomUUID());
+  window.location.reload();
+}
+
+export function getSessionId(): string {
+  return currentSessionId();
+}
 
 const SocketContext = createContext<PishkarSocket | null>(null);
 
@@ -24,7 +42,7 @@ export function App() {
   if (!socketRef.current) {
     socketRef.current = new PishkarSocket({
       userId: USER_ID,
-      sessionId: SESSION_ID,
+      sessionId: currentSessionId(),
       onEvent: applyEvent,
       onStatus: setStatus,
     });
