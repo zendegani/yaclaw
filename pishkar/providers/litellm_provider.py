@@ -11,7 +11,7 @@ to: `chunk.choices[0].delta.{content, tool_calls}` plus
 """
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from pishkar.providers.base import ModelProvider, ProviderChunk, ToolCallDelta, Usage
 
@@ -84,6 +84,7 @@ class LiteLLMProvider(ModelProvider):
             "model": model,
             "messages": msgs,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             kwargs["tools"] = tools
@@ -112,7 +113,7 @@ def build_router_completion(
     router = Router(
         model_list=model_list,
         fallbacks=fallbacks or [],
-        routing_strategy=routing_strategy,
+        routing_strategy=cast(Any, routing_strategy),
     )
     return router.acompletion  # type: ignore[no-any-return]
 

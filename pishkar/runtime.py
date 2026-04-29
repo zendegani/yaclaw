@@ -14,18 +14,26 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from pishkar.core.agent import run_turn
+from pishkar.core.context import current_session_id, current_turn_id
 from pishkar.core.events import Event
 from pishkar.core.messages import InboundMessage
+from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Handler
 from pishkar.gateway.hooks import HookManager
 from pishkar.providers.base import ModelProvider
 from pishkar.providers.litellm_provider import LiteLLMProvider, build_router_completion
+from pishkar.tools.approval_gate import ApprovalGate
 from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
 from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
 from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
 from pishkar.workspace.store import SessionStore
+
+# Tools that need user approval before each call. Read-only operations
+# stay off this list; sensitive ones (state-mutating, network, shell)
+# are gated.
+DEFAULT_GATED_TOOLS: frozenset[str] = frozenset({"write_file", "http", "bash"})
 
 DEFAULT_SYSTEM = (
     "You are Pishkar, a personal AI butler. Be concise and direct. "
@@ -43,15 +51,52 @@ def build_handler(
     system: str = DEFAULT_SYSTEM,
     workspace_loader: WorkspaceLoader | None = None,
     interrupted_sessions: set[str] | None = None,
+    approval_router: ApprovalRouter | None = None,
+    gated_tools: frozenset[str] = DEFAULT_GATED_TOOLS,
+    store: SessionStore | None = None,
 ) -> Handler:
     registry = registry or _default_registry()
-    runner = runner or SubprocessToolRunner(registry, hooks=hooks)
     histories: dict[str, list[dict[str, Any]]] = {}
+    gates: dict[str, ApprovalGate] = {}
     tool_schemas = registry.schemas("openai")
     interrupted = interrupted_sessions if interrupted_sessions is not None else set()
 
+    def _make_gate(session_id: str, user_id: str) -> ApprovalGate:
+        all_tools = set(registry.names())
+        always_allow = all_tools - set(gated_tools)
+
+        async def prompt(tool_name: str, args: dict[str, Any]) -> Any:
+            if approval_router is None:
+                from pishkar.tools.approval_gate import ApprovalDecision
+
+                return ApprovalDecision.DENY
+            return await approval_router.request(
+                session_id=current_session_id.get() or session_id,
+                turn_id=current_turn_id.get(),
+                tool_name=tool_name,
+                args=args,
+            )
+
+        return ApprovalGate(
+            prompt,
+            store=store,
+            user_id=user_id,
+            session_id=session_id,
+            always_allow=always_allow,
+        )
+
+    def _runner_for(session_id: str, user_id: str) -> SubprocessToolRunner:
+        if runner is not None:
+            return runner
+        gate = gates.get(session_id)
+        if gate is None:
+            gate = _make_gate(session_id, user_id)
+            gates[session_id] = gate
+        return SubprocessToolRunner(registry, hooks=hooks, approval_fn=gate.check)
+
     def handler(msg: InboundMessage) -> AsyncIterator[Event]:
         history = histories.setdefault(msg.session_id, [])
+        turn_runner = _runner_for(msg.session_id, msg.user_id)
         # Re-read the workspace per turn so edits the agent makes to
         # USER.md take effect on the next turn without a server restart.
         if workspace_loader is not None:
@@ -73,7 +118,7 @@ def build_handler(
             user_message=msg,
             history=history,
             provider=provider,
-            runner=runner,
+            runner=turn_runner,
             tool_schemas=tool_schemas,
             system=turn_system,
             model=model,

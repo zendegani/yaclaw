@@ -28,9 +28,11 @@ from pishkar.channels.ws import WebSocketChannel
 from pishkar.channels.ws import WebSocketDisconnect as ChannelWebSocketDisconnect
 from pishkar.core.events import Event, TurnEnd, TurnStart
 from pishkar.core.messages import InboundMessage
+from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway, Handler
 from pishkar.gateway.hooks import HookManager
 from pishkar.observability.sqlite_sink import SqliteSink
+from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
 
 HandlerFactory = Callable[[], Handler]
@@ -42,6 +44,7 @@ def create_app(
     handler: Handler,
     hooks: HookManager | None = None,
     recovery_target: set[str] | None = None,
+    approval_router: ApprovalRouter | None = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -83,18 +86,44 @@ def create_app(
             user_id=user_id,
             session_id=session_id,
             disconnect_exc=ChannelWebSocketDisconnect,
+            control_handler=_make_control_handler(approval_router, session_id),
         )
         gateway.register_channel(session_id, channel)
+        if approval_router is not None:
+            approval_router.bind(session_id, channel.send_event)
         try:
             async for msg in channel.inbound():
                 await gateway.submit(msg)
         except WebSocketDisconnect:
             pass
         finally:
+            if approval_router is not None:
+                approval_router.unbind(session_id)
             gateway.detach_channel(session_id, channel)
             await channel.close()
 
     return app
+
+
+def _make_control_handler(
+    approval_router: ApprovalRouter | None, session_id: str
+):
+    async def handle(payload: dict) -> None:
+        if approval_router is None:
+            return
+        if payload.get("type") != "approval_response":
+            return
+        request_id = payload.get("request_id")
+        decision_raw = payload.get("decision")
+        if not isinstance(request_id, str) or not isinstance(decision_raw, str):
+            return
+        try:
+            decision = ApprovalDecision(decision_raw)
+        except ValueError:
+            return
+        approval_router.resolve(session_id, request_id, decision)
+
+    return handle
 
 
 def _wrap_handler(handler: Handler, sink: SqliteSink) -> Handler:
@@ -173,6 +202,7 @@ def main() -> None:
         for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
     )
     interrupted: set[str] = set()
+    approval_router = ApprovalRouter()
     if has_key:
         from pishkar.runtime import build_default_provider, build_handler
         from pishkar.workspace.loader import WorkspaceLoader
@@ -185,11 +215,18 @@ def main() -> None:
             model=model,
             workspace_loader=loader,
             interrupted_sessions=interrupted,
+            approval_router=approval_router,
+            store=store,
         )
     else:
         handler = _default_handler  # echo stub keeps the server bootable offline
 
-    app = create_app(store=store, handler=handler, recovery_target=interrupted)
+    app = create_app(
+        store=store,
+        handler=handler,
+        recovery_target=interrupted,
+        approval_router=approval_router,
+    )
     uvicorn.run(app, host="127.0.0.1", port=8765)
 
 

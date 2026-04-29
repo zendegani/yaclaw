@@ -13,13 +13,15 @@ here — the channel just streams whatever events it is given.
 """
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
 from pydantic import ValidationError
 
 from pishkar.core.events import Event
 from pishkar.core.messages import InboundMessage
+
+ControlHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class _SocketLike(Protocol):
@@ -43,11 +45,13 @@ class WebSocketChannel:
         user_id: str,
         session_id: str,
         disconnect_exc: type[BaseException] = WebSocketDisconnect,
+        control_handler: ControlHandler | None = None,
     ) -> None:
         self._socket = socket
         self._user_id = user_id
         self._session_id = session_id
         self._disconnect_exc = disconnect_exc
+        self._control_handler = control_handler
         self._closed = False
 
     async def inbound(self) -> AsyncIterator[InboundMessage]:
@@ -59,6 +63,11 @@ class WebSocketChannel:
             try:
                 payload: dict[str, Any] = json.loads(raw)
             except json.JSONDecodeError:
+                continue
+            # Control frames (anything with a recognized "type") bypass
+            # the InboundMessage shape and route to the control handler.
+            if "type" in payload and self._control_handler is not None:
+                await self._control_handler(payload)
                 continue
             payload.setdefault("user_id", self._user_id)
             payload.setdefault("session_id", self._session_id)

@@ -40,6 +40,12 @@ export interface ToolResult extends EventBase {
   is_error: boolean;
 }
 export interface TurnEnd extends EventBase { type: "turn_end"; stop_reason: TurnStopReason }
+export interface ApprovalRequest extends EventBase {
+  type: "approval_request";
+  request_id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+}
 
 export type Event =
   | TurnStart
@@ -50,7 +56,16 @@ export type Event =
   | MessageDelta
   | MessageStop
   | ToolResult
-  | TurnEnd;
+  | TurnEnd
+  | ApprovalRequest;
+
+export type ApprovalDecision = "allow_once" | "allow_session" | "deny";
+
+export interface ApprovalResponse {
+  type: "approval_response";
+  request_id: string;
+  decision: ApprovalDecision;
+}
 
 export interface InboundMessage {
   message_id?: string;

@@ -131,6 +131,13 @@ class TurnEnd(_EventBase):
     stop_reason: Literal["end_turn", "max_turns", "loop_detected", "error"]
 
 
+class ApprovalRequest(_EventBase):
+    type: Literal["approval_request"] = "approval_request"
+    request_id: str
+    tool_name: str
+    input: dict[str, Any]
+
+
 Event = Annotated[
     Union[
         TurnStart,
@@ -142,6 +149,7 @@ Event = Annotated[
         MessageStop,
         ToolResult,
         TurnEnd,
+        ApprovalRequest,
     ],
     Field(discriminator="type"),
 ]

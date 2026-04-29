@@ -25,11 +25,18 @@ export interface RawEntry {
   event: Event;
 }
 
+export interface PendingApproval {
+  request_id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+}
+
 interface State {
   items: ChatItem[];
   status: "connecting" | "open" | "closed";
   raw: RawEntry[];
   totals: { inputTokens: number; outputTokens: number; turns: number };
+  approvals: PendingApproval[];
 }
 
 let state: State = {
@@ -37,6 +44,7 @@ let state: State = {
   status: "connecting",
   raw: [],
   totals: { inputTokens: 0, outputTokens: 0, turns: 0 },
+  approvals: [],
 };
 const listeners = new Set<() => void>();
 
@@ -124,6 +132,14 @@ export function applyEvent(event: Event): void {
       setState({ ...state, items: [...next], raw, totals });
       return;
     }
+    case "approval_request": {
+      const approvals = [
+        ...state.approvals,
+        { request_id: event.request_id, tool_name: event.tool_name, input: event.input },
+      ];
+      setState({ ...state, approvals, raw, totals });
+      return;
+    }
     case "turn_end": {
       const [next, turn] = findOrCreateTurn(items, event.turn_id);
       turn.done = true;
@@ -149,6 +165,13 @@ export function setStatus(status: State["status"]): void {
 
 export function clearRaw(): void {
   setState({ ...state, raw: [] });
+}
+
+export function dismissApproval(request_id: string): void {
+  setState({
+    ...state,
+    approvals: state.approvals.filter((a) => a.request_id !== request_id),
+  });
 }
 
 function subscribe(l: () => void): () => void {

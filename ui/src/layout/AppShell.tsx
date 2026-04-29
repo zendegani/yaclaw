@@ -1,7 +1,11 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { Activity, LayoutDashboard, MessageSquare, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useChatState } from "@/state/store";
+import { useChatState, dismissApproval } from "@/state/store";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { ApprovalDialog } from "@/components/ApprovalDialog";
+import { useSocket } from "@/App";
+import type { ApprovalDecision } from "@/api/events";
 
 const NAV = [
   { to: "/", label: "Chat", icon: MessageSquare, end: true },
@@ -11,13 +15,21 @@ const NAV = [
 ];
 
 export function AppShell() {
-  const { status } = useChatState();
+  const { status, approvals } = useChatState();
+  const socket = useSocket();
+  const pending = approvals[0] ?? null;
+  const answer = (decision: ApprovalDecision) => {
+    if (!pending) return;
+    socket.sendApproval(pending.request_id, decision);
+    dismissApproval(pending.request_id);
+  };
   return (
-    <div className="dark flex h-full bg-background text-foreground">
+    <div className="flex h-full bg-background text-foreground">
       <aside className="flex w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
         <div className="flex h-14 items-center gap-2 px-4 font-semibold tracking-tight">
           <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />
-          Pishkar
+          <span className="flex-1">Pishkar</span>
+          <ThemeToggle />
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
           {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -56,6 +68,7 @@ export function AppShell() {
       <main className="flex flex-1 flex-col overflow-hidden">
         <Outlet />
       </main>
+      <ApprovalDialog approval={pending} onAnswer={answer} />
     </div>
   );
 }

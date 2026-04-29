@@ -1,4 +1,4 @@
-import type { Event, InboundMessage } from "./events";
+import type { ApprovalDecision, ApprovalResponse, Event, InboundMessage } from "./events";
 
 export type EventHandler = (event: Event) => void;
 
@@ -51,6 +51,15 @@ export class PishkarSocket {
 
   send(content: string): void {
     const payload: InboundMessage = { content };
+    this.ws?.send(JSON.stringify(payload));
+  }
+
+  sendApproval(requestId: string, decision: ApprovalDecision): void {
+    const payload: ApprovalResponse = {
+      type: "approval_response",
+      request_id: requestId,
+      decision,
+    };
     this.ws?.send(JSON.stringify(payload));
   }
 
