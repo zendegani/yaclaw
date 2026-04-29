@@ -37,12 +37,22 @@ def _parse_chunk(chunk: Any) -> ProviderChunk:
     tool_calls: list[ToolCallDelta] = []
     for tc in _attr(delta, "tool_calls") or []:
         fn = _attr(tc, "function")
+        # OpenAI-style streams arrive as accumulating JSON strings; some
+        # providers (notably Gemini via LiteLLM) hand back an already-parsed
+        # dict. Normalize to JSON text so the agent's accumulator works.
+        raw_args = _attr(fn, "arguments")
+        if isinstance(raw_args, dict | list):
+            import json as _json
+
+            args = _json.dumps(raw_args)
+        else:
+            args = raw_args
         tool_calls.append(
             ToolCallDelta(
                 index=_attr(tc, "index", 0) or 0,
                 id=_attr(tc, "id"),
                 name=_attr(fn, "name"),
-                arguments=_attr(fn, "arguments"),
+                arguments=args,
             )
         )
 

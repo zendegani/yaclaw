@@ -18,12 +18,15 @@ run), `request` denies immediately rather than hanging.
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
 from pishkar.core.events import ApprovalRequest, Event
 from pishkar.tools.approval_gate import ApprovalDecision
+
+log = logging.getLogger(__name__)
 
 ChannelSend = Callable[[Event], Awaitable[None]]
 
@@ -63,9 +66,22 @@ class ApprovalRouter:
     ) -> ApprovalDecision:
         send = self._channels.get(session_id)
         if send is None:
+            log.warning(
+                "approval_router: no channel bound for session %r — denying %s; "
+                "bound sessions: %s",
+                session_id,
+                tool_name,
+                list(self._channels),
+            )
             return ApprovalDecision.DENY
 
         request_id = str(uuid4())
+        log.info(
+            "approval_router: prompting user for %s (session=%s, request_id=%s)",
+            tool_name,
+            session_id,
+            request_id,
+        )
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[ApprovalDecision] = loop.create_future()
         self._pending[(session_id, request_id)] = fut
