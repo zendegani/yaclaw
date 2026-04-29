@@ -19,6 +19,7 @@ dev = [
     "pytest-asyncio",
     "pre-commit",
     "httpx>=0.28.1",
+    "pydantic-to-typescript>=2.0",
 ]
 
 [build-system]
