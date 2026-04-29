@@ -180,23 +180,54 @@ def build_default_provider() -> tuple[ModelProvider, str]:
     return LiteLLMProvider(completion), model
 
 
+# Map known API-key env vars to (default model, litellm prefix).
+# Order = priority when multiple keys are set and PISHKAR_MODEL is unset.
+PROVIDER_KEYS: tuple[tuple[str, str, str], ...] = (
+    ("ANTHROPIC_API_KEY", "claude-opus-4-7", "anthropic"),
+    ("OPENAI_API_KEY", "gpt-4o-mini", "openai"),
+    ("OPENROUTER_API_KEY", "openrouter/anthropic/claude-3.5-sonnet", "openrouter"),
+    ("GROQ_API_KEY", "groq/llama-3.3-70b-versatile", "groq"),
+    ("MOONSHOT_API_KEY", "moonshot/moonshot-v1-8k", "moonshot"),
+    ("DASHSCOPE_API_KEY", "dashscope/qwen-turbo", "dashscope"),
+    ("GEMINI_API_KEY", "gemini-3-flash-preview", "gemini"),
+    ("GOOGLE_API_KEY", "gemini-3-flash-preview", "gemini"),
+)
+
+# Bare model-name prefix → litellm provider prefix. Lets users say
+# `claude-opus-4-7` instead of `anthropic/claude-opus-4-7`.
+_BARE_PREFIX_TO_PROVIDER: tuple[tuple[str, str], ...] = (
+    ("claude-", "anthropic"),
+    ("gpt-", "openai"),
+    ("o1-", "openai"),
+    ("o3-", "openai"),
+    ("gemini-", "gemini"),
+    ("llama-", "groq"),
+    ("mixtral-", "groq"),
+    ("moonshot-", "moonshot"),
+    ("kimi-", "moonshot"),
+    ("qwen-", "dashscope"),
+)
+
+KNOWN_PROVIDERS: frozenset[str] = frozenset(
+    {"anthropic", "openai", "gemini", "openrouter", "groq", "moonshot", "dashscope"}
+)
+
+
 def _default_model_for_env() -> str:
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "claude-opus-4-7"
-    if os.environ.get("OPENAI_API_KEY"):
-        return "gpt-4o-mini"
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return "gemini-3-flash-preview"
+    for key, default_model, _ in PROVIDER_KEYS:
+        if os.environ.get(key):
+            return default_model
     return "claude-opus-4-7"
 
 
 def _litellm_name(model: str) -> str:
-    if model.startswith(("claude-", "anthropic/")):
-        return model if model.startswith("anthropic/") else f"anthropic/{model}"
-    if model.startswith(("gpt-", "openai/")):
-        return model if model.startswith("openai/") else f"openai/{model}"
-    if model.startswith(("gemini-", "gemini/")):
-        return model if model.startswith("gemini/") else f"gemini/{model}"
+    """Normalize a model name to litellm's `<provider>/<model>` shape."""
+    head = model.split("/", 1)[0]
+    if head in KNOWN_PROVIDERS:
+        return model
+    for prefix, provider in _BARE_PREFIX_TO_PROVIDER:
+        if model.startswith(prefix):
+            return f"{provider}/{model}"
     return model
 
 

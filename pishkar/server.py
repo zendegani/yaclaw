@@ -219,15 +219,19 @@ def main() -> None:
     import os
 
     import uvicorn
+    from dotenv import load_dotenv
+
+    # Load `.env` from cwd (and parents) so `python -m pishkar.server`
+    # picks up provider keys without needing them exported in the shell.
+    load_dotenv()
+
+    from pishkar.runtime import PROVIDER_KEYS
 
     db_path = Path.home() / ".pishkar" / "sessions.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     store = SessionStore(db_path)
 
-    has_key = any(
-        os.environ.get(k)
-        for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
-    )
+    has_key = any(os.environ.get(k) for k, _, _ in PROVIDER_KEYS)
     interrupted: set[str] = set()
     approval_router = ApprovalRouter()
     if has_key:

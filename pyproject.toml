@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.136.1",
     "uvicorn[standard]>=0.46.0",
     "litellm>=1.50",
+    "python-dotenv>=1.0",
 ]
 
 [dependency-groups]
