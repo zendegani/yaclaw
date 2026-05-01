@@ -38,6 +38,7 @@ Four execution patterns are observable in the field:
 * **Autonomous agent** — the LLM plans steps, picks tools, and decides when finished (IronClaw, microclaw, ZeptoClaw, ApexClaw, Hermes, MimiClaw). Flexible and capable of multi-step novel tasks; less predictable, more expensive, harder to debug.
 * **Conversational assistant** — back-and-forth chat with tool access; the human orchestrates each turn (nanobot, KrillClaw). Best when judgment must remain with the human; throughput limited by user attention.
 * **Hybrid** — deterministic skeleton with bounded agent freedom inside (OpenClaw, Mercury, PicoClaw, TinyClaw, RT-Claw, nanoclaw). Workflow-level predictability with agent-level flexibility; the most upfront architectural design.
+* **Multi-Agent / Swarm** — Extends the boundary of a single loop into a distributed architecture. microclaw and Hermes use "Plan & Execute" sub-agent fan-out; RT-Claw networks physical hardware nodes for remote tool execution.
 
 The field has converged: the toy systems are conversational, the production-grade systems are hybrid or autonomous-with-controls. No serious project ships pure workflow as a butler, and no serious project ships pure autonomous without surrounding governance.
 
@@ -61,7 +62,7 @@ The agent loop — the `run_turn(messages, tools) → events` function — is th
 
 Three implementation shapes appear across the fifteen:
 
-* **Hand-rolled loops** (12 of 15) — OpenClaw, PicoClaw, KrillClaw, ZeptoClaw, microclaw, IronClaw, MimiClaw, nanobot, ApexClaw, NemoClaw, RT-Claw, Hermes. Each project writes its own ReAct-style loop with custom hooks, compaction, and loop-detection primitives.
+* **Hand-rolled loops** (12 of 15) — OpenClaw, PicoClaw, KrillClaw, ZeptoClaw, microclaw, IronClaw, MimiClaw, nanobot, ApexClaw, NemoClaw, RT-Claw, Hermes. Each project writes its own ReAct-style loop with custom hooks, compaction, and loop-detection primitives. (Matches `claws.md` but *extends* it by enabling **Mid-run Steering**: PicoClaw, microclaw, Hermes, and OpenClaw support interrupting, injecting messages mid-run, or streaming intermediate outputs).
 * **SDK-as-engine** (2 of 15) — Mercury delegates the loop to Vercel AI SDK v4 (`generateText` / `streamText`); nanoclaw delegates the loop to Anthropic's Claude Agent SDK directly. Streaming, retry, and multi-provider concerns come for free; in-loop hooks become awkward to insert.
 * **CLI-as-runtime** — TinyClaw (renamed to TinyAGI) shells out to the `claude` or `codex` CLI per turn and parses stdout. Fast prototype, fragile long-term.
 
@@ -91,7 +92,8 @@ Four memory architectures appear:
 * **Workspace + SQLite session log** (TinyClaw, nanobot) — adds persistent conversation history; enables FTS5 search and reflector loops later without migration.
 * **Per-agent workspace + per-session inbound/outbound SQLite separation** (nanoclaw) — each agent group has its own `CLAUDE.md` workspace under `groups/<folder>/`; per session, an `inbound.db` (host writes, container reads) and `outbound.db` (container writes, host reads) — exactly one writer per file, eliminating cross-mount contention as a side effect of the architecture.
 * **Workspace + SQLite + typed memory** (Mercury) — ten typed categories (identity, preference, goal, project, habit, decision, constraint, relationship, episode, reflection) with confidence/importance/durability scores; auto-consolidation every 60 minutes; top-N retrieval with character budget.
-* **Workspace + SQLite + semantic recall** — microclaw uses `sqlite-vec` extension with a background reflector that extracts and dedupes facts; Hermes uses FTS5 cross-session search; IronClaw uses PostgreSQL + pgvector with Reciprocal Rank Fusion.
+* **Workspace + SQLite + semantic recall** — microclaw uses `sqlite-vec` extension with a background reflector that extracts and dedupes facts; Hermes uses FTS5 cross-session search with Honcho dialectic user modeling; IronClaw uses PostgreSQL + pgvector with Reciprocal Rank Fusion.
+* **Context Window Management** — Rather than simple truncation, ZeptoClaw introduces Tiered Compaction (70/90/95%), while Mercury enforces a daily token budget with auto-concise. This *expands* traditional memory logic to actively guard the active context.
 
 ### Trade-offs
 
@@ -115,6 +117,7 @@ The Channel abstraction is non-negotiable: every reference project that scaled c
 * **Multi-channel via channel registry** — OpenClaw (20+ channels via Gateway, including Web UI, CLI, Telegram, Slack), nanoclaw (CLI + WhatsApp / Telegram / Slack / Discord / Gmail / Teams / iMessage / Matrix / etc., channel registry self-registers at startup), Mercury (Web UI + CLI + OS daemon), PicoClaw (CLI + multi-channel via Hooks fired on channel events). Common shape: channel registry self-registers at startup; agent loop receives canonical `InboundMessage` regardless of source.
 * **Telegram-native** — ApexClaw (Telegram-bound), MimiClaw (ESP32 firmware) — mobile-first or device-first deployments.
 * **Embedded transports** — KrillClaw (BLE/Serial/HTTP via vtable), RT-Claw (OSAL across FreeRTOS/RT-Thread/Linux) — specialized hardware.
+* **Configuration Surfaces** — Several projects expose UI specifically for agent setup: PicoClaw and ZeptoClaw offer a WebUI Launcher / Setup Wizard, while MimiClaw relies on a UART Serial REPL for NVS-flash configuration.
 
 The pattern across multi-channel projects is that the agent loop receives a canonical `InboundMessage` and emits a canonical `OutboundMessage`; channel-specific concerns (Telegram inline buttons, Slack blocks, WhatsApp templates) live in a free-form `metadata` dict so they never leak into the loop.
 
@@ -140,9 +143,9 @@ Operating an LLM-driven agent that can execute shell commands and edit files req
 
 Four governance archetypes appear:
 
-* **Minimum** (KrillClaw, microclaw, nanobot, MimiClaw) — loop guard plus a single-operator trust assumption. Suitable when the operator is the only user and tools are vetted by hand.
+* **Minimum** (KrillClaw, microclaw, nanobot, MimiClaw) — loop guard plus a single-operator trust assumption. KrillClaw uniquely uses Zig comptime profiles to strip unneeded tools at compile-time to reduce surface area.
 * **Credential-vault + container isolation** (nanoclaw) — OneCLI Agent Vault injects credentials at the proxy level so they never enter the container, with per-agent policies and rate limits; combined with Docker per-agent and a three-level isolation model. Distinctive in the set for separating credential authority from execution authority.
-* **Sandbox-as-governance** (IronClaw with WASM + prompt-injection detection; NemoClaw with Landlock + seccomp + netns; Hermes with six isolation tiers — local, Docker, SSH, Daytona, Modal, Singularity) — structural prevention rather than permission gates.
+* **Sandbox-as-governance** (IronClaw with WASM capability-based permissions; ZeptoClaw with 6 Sandbox Runtimes + Aho-Corasick prompt injection detection + SSRF guards; NemoClaw with Landlock + seccomp + netns; Hermes with six isolation tiers) — structural prevention rather than permission gates. Matches and *expands* standard sandboxing expectations.
 * **Loop & compaction guards** (ZeptoClaw with SHA256 loop detection + tiered compaction at 70/90/95%; PicoClaw with Hooks/Steering primitives) — bounded execution without per-tool approval.
 * **Full governance layer** (Mercury, the gold standard) — interactive approval gate (*Ask Me / Allow Once / Allow All This Session*), daily token budget with auto-concise at 70%, folder-scope restrictions, OS-daemon recovery with exponential backoff.
 
@@ -429,8 +432,8 @@ How the runtime actually runs day-to-day — manual command, OS service, Docker 
 * **OS-native daemon** — Mercury (LaunchAgent / systemd / Task Scheduler) with crash recovery and exponential backoff.
 * **Docker-resident** — OpenClaw, NemoClaw (already in Docker for sandboxing).
 * **Always-on bot** — ApexClaw (Telegram, deployed wherever it can hold a persistent connection).
-* **Multi-backend** — Hermes runs across local / Docker / SSH / Daytona / Modal / Singularity.
-* **Embedded firmware** — MimiClaw (ESP32-S3), RT-Claw, KrillClaw — runs continuously on hardware.
+* **Multi-backend & Serverless** — Hermes runs across local / Docker / SSH / Singularity, but *expands* deployment significantly with Daytona / Modal for Serverless hibernation (zero cost when idle, wakes on demand).
+* **Embedded firmware (Ultra-light footprint)** — MimiClaw (bare-metal ESP32 C), RT-Claw (OSAL across FreeRTOS), KrillClaw (~450KB Zig binary), PicoClaw (<10MB RAM Go binary) — these architectures completely discard heavy Docker/Node.js environments for single-digit MB footprints.
 
 ### Trade-offs
 
