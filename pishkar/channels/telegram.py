@@ -37,6 +37,7 @@ from pishkar.core.events import (
     SessionChanged,
     TextDelta,
     TurnEnd,
+    UserMessage,
 )
 from pishkar.core.messages import InboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
@@ -88,6 +89,18 @@ class TelegramChannel:
 
     async def send_event(self, event: Event) -> None:
         if self._closed:
+            return
+        if isinstance(event, UserMessage):
+            # Mirror sibling-channel user messages into this chat so the
+            # conversation reads coherently across devices. Suppress the
+            # echo of our own channel — Telegram already shows it.
+            if event.channel and event.channel != self.name:
+                source = event.channel
+                content = event.content
+                await self._safe_send(
+                    text=f"💬 <i>{html.escape(source)}</i>: {html.escape(content)}",
+                    parse_mode="HTML",
+                )
             return
         if isinstance(event, ContentBlockDelta) and isinstance(event.delta, TextDelta):
             self._buffer.append(event.delta.text)
@@ -239,7 +252,7 @@ class TelegramBotRunner:
             if session_id is not None:
                 self._gateway.detach_channel(session_id, channel)
                 if self._approval_router is not None:
-                    self._approval_router.unbind(session_id)
+                    self._approval_router.unbind(session_id, channel="telegram")
             if self._user_registry is not None:
                 await self._user_registry.unregister(
                     self._user_id, channel.send_event
@@ -436,7 +449,7 @@ class TelegramBotRunner:
         self._channels[chat_id] = channel
         self._gateway.register_channel(sid, channel)
         if self._approval_router is not None:
-            self._approval_router.bind(sid, channel.send_event)
+            self._approval_router.bind(sid, channel.send_event, channel="telegram")
         if self._user_registry is not None:
             await self._user_registry.register(
                 self._user_id, sid, channel.send_event
@@ -451,7 +464,7 @@ class TelegramBotRunner:
         if old_channel is not None and old_session is not None:
             self._gateway.detach_channel(old_session, old_channel)
             if self._approval_router is not None:
-                self._approval_router.unbind(old_session)
+                self._approval_router.unbind(old_session, channel="telegram")
             if self._user_registry is not None:
                 await self._user_registry.unregister(
                     self._user_id, old_channel.send_event

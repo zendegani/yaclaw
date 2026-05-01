@@ -5,8 +5,12 @@ export interface AssistantTurn {
   turn_id: string;
   text: string;
   thinking: string;
-  toolCalls: Record<string, { use: ToolUseBlock; result?: string; isError?: boolean }>;
+  toolCalls: Record<
+    string,
+    { use: ToolUseBlock; inputRaw?: string; result?: string; isError?: boolean }
+  >;
   toolOrder: string[];
+  blockIndexToCallId: Record<number, string>;
   done: boolean;
   stopReason?: string;
   inputTokens?: number;
@@ -72,6 +76,7 @@ function findOrCreateTurn(items: ChatItem[], turn_id: string): [ChatItem[], Assi
     thinking: "",
     toolCalls: {},
     toolOrder: [],
+    blockIndexToCallId: {},
     done: false,
     startedAt: Date.now(),
   };
@@ -102,9 +107,10 @@ export function applyEvent(event: Event): void {
         const block = event.content_block;
         const [next, turn] = findOrCreateTurn(items, event.turn_id);
         if (!turn.toolCalls[block.id]) {
-          turn.toolCalls[block.id] = { use: block };
+          turn.toolCalls[block.id] = { use: block, inputRaw: "" };
           turn.toolOrder.push(block.id);
         }
+        turn.blockIndexToCallId[event.index] = block.id;
         setState({ ...state, items: [...next], raw, totals });
       } else {
         setState({ ...state, raw, totals });
@@ -115,6 +121,41 @@ export function applyEvent(event: Event): void {
       const [next, turn] = findOrCreateTurn(items, event.turn_id);
       if (event.delta.type === "text_delta") turn.text += event.delta.text;
       else if (event.delta.type === "thinking_delta") turn.thinking += event.delta.thinking;
+      else if (event.delta.type === "input_json_delta") {
+        const callId = turn.blockIndexToCallId[event.index];
+        const slot = callId ? turn.toolCalls[callId] : undefined;
+        if (slot) {
+          slot.inputRaw = (slot.inputRaw ?? "") + event.delta.partial_json;
+          // Best-effort live parse: streamed JSON is often invalid until the
+          // last delta. We only update `use.input` when it parses cleanly so
+          // we never show garbage; the final value lands at content_block_stop.
+          try {
+            const parsed = JSON.parse(slot.inputRaw);
+            if (parsed && typeof parsed === "object") {
+              slot.use = { ...slot.use, input: parsed as Record<string, unknown> };
+            }
+          } catch {
+            // partial JSON — keep accumulating.
+          }
+        }
+      }
+      setState({ ...state, items: [...next], raw, totals });
+      return;
+    }
+    case "content_block_stop": {
+      const [next, turn] = findOrCreateTurn(items, event.turn_id);
+      const callId = turn.blockIndexToCallId[event.index];
+      const slot = callId ? turn.toolCalls[callId] : undefined;
+      if (slot && slot.inputRaw) {
+        try {
+          const parsed = JSON.parse(slot.inputRaw);
+          if (parsed && typeof parsed === "object") {
+            slot.use = { ...slot.use, input: parsed as Record<string, unknown> };
+          }
+        } catch {
+          // Leave whatever we last successfully parsed.
+        }
+      }
       setState({ ...state, items: [...next], raw, totals });
       return;
     }

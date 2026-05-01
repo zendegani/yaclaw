@@ -35,26 +35,54 @@ DEFAULT_APPROVAL_TIMEOUT_S = 120.0
 
 class ApprovalRouter:
     def __init__(self, *, timeout_s: float = DEFAULT_APPROVAL_TIMEOUT_S) -> None:
-        self._channels: dict[str, ChannelSend] = {}
+        # Multiple channels can attach to one session (web tab + Telegram chat
+        # talking on the same thread). We keep them all and prefer the one
+        # whose channel-name matches the message that triggered the prompt
+        # — otherwise the popup lands on whichever bound last.
+        self._channels: dict[str, dict[str, ChannelSend]] = {}
         # (session_id, request_id) -> Future[ApprovalDecision]
         self._pending: dict[tuple[str, str], asyncio.Future[ApprovalDecision]] = {}
         self._timeout_s = timeout_s
 
-    def bind(self, session_id: str, send: ChannelSend) -> None:
-        self._channels[session_id] = send
+    def bind(
+        self, session_id: str, send: ChannelSend, *, channel: str = "default"
+    ) -> None:
+        self._channels.setdefault(session_id, {})[channel] = send
 
-    def unbind(self, session_id: str) -> None:
-        self._channels.pop(session_id, None)
+    def unbind(self, session_id: str, *, channel: str | None = None) -> None:
+        if channel is None:
+            self._channels.pop(session_id, None)
+        else:
+            chans = self._channels.get(session_id)
+            if chans is not None:
+                chans.pop(channel, None)
+                if not chans:
+                    self._channels.pop(session_id, None)
         # Fail any pending requests for this session — the user is gone.
-        for key in [k for k in self._pending if k[0] == session_id]:
-            fut = self._pending.pop(key)
-            if not fut.done():
-                fut.set_result(ApprovalDecision.DENY)
+        if session_id not in self._channels:
+            for key in [k for k in self._pending if k[0] == session_id]:
+                fut = self._pending.pop(key)
+                if not fut.done():
+                    fut.set_result(ApprovalDecision.DENY)
 
     def resolve(self, session_id: str, request_id: str, decision: ApprovalDecision) -> None:
         fut = self._pending.pop((session_id, request_id), None)
         if fut is not None and not fut.done():
             fut.set_result(decision)
+
+    def _pick_channel(
+        self, session_id: str, preferred: str | None
+    ) -> ChannelSend | None:
+        chans = self._channels.get(session_id)
+        if not chans:
+            return None
+        if preferred and preferred in chans:
+            return chans[preferred]
+        # Fallback: any bound channel — prefer non-default ordering by name
+        # for stability across runs.
+        for name in sorted(chans):
+            return chans[name]
+        return None
 
     async def request(
         self,
@@ -63,8 +91,9 @@ class ApprovalRouter:
         turn_id: str,
         tool_name: str,
         args: dict[str, Any],
+        preferred_channel: str | None = None,
     ) -> ApprovalDecision:
-        send = self._channels.get(session_id)
+        send = self._pick_channel(session_id, preferred_channel)
         if send is None:
             log.warning(
                 "approval_router: no channel bound for session %r — denying %s; "

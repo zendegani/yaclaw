@@ -141,6 +141,9 @@ class ApprovalRequest(_EventBase):
 class UserMessage(_EventBase):
     """Echo of an inbound user message, persisted to the event log so a
     reconnecting client can rebuild the full chat from replay alone.
+    `channel` carries the channel the message was sent on, so other live
+    channels can decide whether to mirror it (Telegram surfaces a "💬 web:
+    …" line; the originating channel suppresses to avoid double-rendering).
 
     `turn_id` is empty — user messages aren't owned by an assistant turn.
     """
@@ -149,6 +152,7 @@ class UserMessage(_EventBase):
     turn_id: str = ""
     message_id: str
     content: str
+    channel: str = ""
 
 
 class SessionChanged(_EventBase):

@@ -158,7 +158,7 @@ def create_app(
         gateway.register_channel(session_id, channel)
         await user_registry.register(user_id, session_id, channel.send_event)
         if approval_router is not None:
-            approval_router.bind(session_id, channel.send_event)
+            approval_router.bind(session_id, channel.send_event, channel="ws")
         try:
             async for msg in channel.inbound():
                 await gateway.submit(msg)
@@ -166,7 +166,7 @@ def create_app(
             pass
         finally:
             if approval_router is not None:
-                approval_router.unbind(session_id)
+                approval_router.unbind(session_id, channel="ws")
             await user_registry.unregister(user_id, channel.send_event)
             gateway.detach_channel(session_id, channel)
             await channel.close()
@@ -216,6 +216,7 @@ def _wrap_handler(handler: Handler, sink: SqliteSink, store: SessionStore) -> Ha
                 session_id=msg.session_id,
                 message_id=msg.message_id,
                 content=msg.content,
+                channel=msg.channel,
             )
             await sink.write_event(user_event)
             yield user_event

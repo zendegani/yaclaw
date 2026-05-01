@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from pishkar.core.agent import run_turn
-from pishkar.core.context import current_session_id, current_turn_id
+from pishkar.core.context import current_channel, current_session_id, current_turn_id
 from pishkar.core.events import Event
 from pishkar.core.messages import InboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
@@ -76,6 +76,7 @@ def build_handler(
                 turn_id=current_turn_id.get(),
                 tool_name=tool_name,
                 args=args,
+                preferred_channel=current_channel.get() or None,
             )
 
         return ApprovalGate(
@@ -114,6 +115,7 @@ def build_handler(
 
     def handler(msg: InboundMessage) -> AsyncIterator[Event]:
         async def gen() -> AsyncIterator[Event]:
+            current_channel.set(msg.channel)
             history = await _ensure_history(msg.session_id)
             turn_runner = _runner_for(msg.session_id, msg.user_id)
             # Re-read the workspace per turn so edits the agent makes to
