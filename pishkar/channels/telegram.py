@@ -210,6 +210,7 @@ class TelegramBotRunner:
     async def start(self) -> None:
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("start", self._on_start))
+        app.add_handler(CommandHandler("help", self._on_help))
         app.add_handler(CommandHandler("new", self._on_new))
         app.add_handler(CommandHandler("sessions", self._on_sessions))
         app.add_handler(CommandHandler("switch", self._on_switch))
@@ -260,7 +261,20 @@ class TelegramBotRunner:
         if not self._is_owner(update) or update.message is None:
             return
         await update.message.reply_text(
-            "Pishkar ready. Send a message; /new starts a fresh session."
+            "Pishkar ready. Send a message; /help for commands."
+        )
+
+    async def _on_help(
+        self, update: Update, _: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update) or update.message is None:
+            return
+        await update.message.reply_text(
+            "/new — start a fresh session\n"
+            "/sessions — list recent sessions\n"
+            "/switch latest — jump to the most recent session\n"
+            "/switch <id-prefix> — switch to a specific session\n"
+            "/help — this message"
         )
 
     async def _on_new(
