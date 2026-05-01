@@ -277,7 +277,7 @@ def main() -> None:
         from pishkar.workspace.loader import WorkspaceLoader
 
         loader = WorkspaceLoader(base_dir=db_path.parent)
-        loader.ensure_starter(os.environ.get("PISHKAR_USER", "ali"))
+        loader.ensure_starter(os.environ.get("PISHKAR_USER", "user"))
         provider, model = build_default_provider()
         handler = build_handler(
             provider=provider,
@@ -296,7 +296,7 @@ def main() -> None:
         recovery_target=interrupted,
         approval_router=approval_router,
         channel_runner_factory=_telegram_factory_from_env(
-            user_id=os.environ.get("PISHKAR_USER", "ali"),
+            user_id=os.environ.get("PISHKAR_USER", "user"),
         ),
     )
     uvicorn.run(app, host="127.0.0.1", port=8765)

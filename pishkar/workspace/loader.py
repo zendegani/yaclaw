@@ -9,6 +9,7 @@ corrupt the workspace files the agent edits live (`SOUL.md`, `USER.md`,
 `HEARTBEAT.md`).
 """
 
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -132,6 +133,10 @@ def compose_system_prompt(ws: Workspace, *, base: str) -> str:
     qualified paths when calling `read_file` / `write_file` — tools
     resolve paths against the server's CWD, not the workspace root."""
     parts = [base.strip()] if base.strip() else []
+    parts.append(
+        "# Current time\n\n"
+        f"{datetime.now().astimezone().isoformat(timespec='seconds')}"
+    )
     parts.append(
         "# Workspace\n\n"
         f"Your workspace lives at: `{ws.root}`\n"

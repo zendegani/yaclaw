@@ -23,6 +23,7 @@ from pishkar.gateway.hooks import HookManager
 from pishkar.providers.base import ModelProvider
 from pishkar.providers.litellm_provider import LiteLLMProvider, build_router_completion
 from pishkar.tools.approval_gate import ApprovalGate
+from pishkar.tools.bash import bash
 from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
 from pishkar.tools.registry import ToolRegistry
@@ -162,7 +163,7 @@ async def _session_id_for_turn(store: SessionStore, turn_id: str) -> str | None:
 
 def _default_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register_many(read_file, write_file, http)
+    reg.register_many(read_file, write_file, http, bash)
     return reg
 
 
