@@ -14,6 +14,7 @@ resolves directly through the injected `ApprovalRouter`.
 """
 
 import contextlib
+import html
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -99,9 +100,9 @@ class TelegramChannel:
                 ),
             ]])
             await self._safe_send(
-                text=f"`{event.tool_name}` wants to run. Allow?",
+                text=_approval_message(event.tool_name, event.input),
                 reply_markup=keyboard,
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
 
     async def close(self) -> None:
@@ -116,6 +117,36 @@ class TelegramChannel:
 
 def _chunk_text(text: str, size: int) -> list[str]:
     return [text[i : i + size] for i in range(0, len(text), size)] or [text]
+
+
+def _approval_message(tool_name: str, args: dict[str, Any]) -> str:
+    """Render an approval prompt with a tool-specific headline so the
+    user sees *what* is being asked, not just the tool name."""
+    head = f"<b>{html.escape(tool_name)}</b> wants to run."
+    detail = _approval_detail(tool_name, args)
+    if detail:
+        return f"{head}\n{detail}"
+    return head
+
+
+def _approval_detail(tool_name: str, args: dict[str, Any]) -> str:
+    if tool_name == "bash":
+        cmd = args.get("cmd")
+        if isinstance(cmd, str):
+            return f"<pre>{html.escape(cmd[:1000])}</pre>"
+    elif tool_name == "write_file":
+        path = args.get("path")
+        content = args.get("content", "")
+        if isinstance(path, str):
+            length = len(content) if isinstance(content, str) else 0
+            return f"<code>{html.escape(path)}</code> ({length} chars)"
+    elif tool_name == "http":
+        url = args.get("url")
+        method = args.get("method", "GET")
+        if isinstance(url, str):
+            method_str = method.upper() if isinstance(method, str) else "GET"
+            return f"<code>{html.escape(method_str)} {html.escape(url)}</code>"
+    return ""
 
 
 class TelegramBotRunner:
