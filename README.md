@@ -35,17 +35,19 @@ Server listens on `127.0.0.1:8765`. By default it picks a model based on which k
 cd ui && npm install && npm run dev
 ```
 
-Open http://localhost:5173.
+Open <http://localhost:5173>.
 
 ### Telegram
 
 1. Message [@BotFather](https://t.me/BotFather), `/newbot`, copy the token.
 2. Message [@userinfobot](https://t.me/userinfobot), copy your numeric ID.
 3. Add to `.env`:
+
    ```
    TELEGRAM_BOT_TOKEN=...
    TELEGRAM_OWNER_ID=...
    ```
+
 4. Restart the server. Only your own user ID can talk to the bot; everyone else is silently ignored. `/new` in chat starts a fresh session.
 
 ## Run on a Raspberry Pi 5
@@ -70,3 +72,40 @@ To keep it running after logout, wrap it in a systemd unit pointing at `uv run -
 - `~/.pishkar/users/<user_id>/{SOUL,USER,AGENTS,HEARTBEAT}.md` — workspace markdown the agent reads and edits
 
 Both are local. Delete to start over.
+
+---
+
+Quick clarification first: the dialog **already** renders the args as a JSON block under the title (`ApprovalDialog.tsx:29-33`, scrollable, `max-h-64`). So for `bash("ls")` you should be seeing:
+
+```
+{
+  "cmd": "ls"
+}
+```
+
+If you're not seeing it at all, that's a bug worth checking (browser zoom, dialog truncation). If you *are* seeing it but find it noisy — agreed, JSON-quoting a shell command is awkward.
+
+My take on what to change:
+
+- **Add a per-tool headline** above the JSON, surfacing the one field that matters:
+  - `bash` → render `args.cmd` as a `<pre>` shell block (no JSON quoting).
+  - `write_file` → headline `path` + `(N chars)`; the JSON pre block already handles the scroll for long content.
+  - `http` → headline `METHOD url`.
+- **Keep the full JSON** below as-is for the long-tail / unknown tools. It's the safety net.
+- The existing `max-h-64 overflow-auto` already prevents long writes from blowing up the dialog — it just becomes a scrollable preview, which is fine.
+
+The "long text into a file" concern is real but not unique to approval — at some point you trust the path enough to not re-read every byte. Showing `path` + length + scrollable preview is the right tradeoff: glanceable headline, full content available if you want to scroll.
+
+Want me to implement the headline for `bash`/`write_file`/`http`? Small change, ~20 lines in `ApprovalDialog.tsx`.
+
+---
+
+Type-check clean. Changes to `ui/src/components/ApprovalDialog.tsx`:
+
+- **`bash`** — shows `$ <cmd>` in a scrollable shell-style block (no JSON quoting).
+- **`write_file`** — shows `path: <path> (<N> chars)` so you see at a glance what's being written and how big.
+- **`http`** — shows `METHOD url`.
+- **Full arguments** — moved into a collapsed `<details>` so it's still there if you want it (paths can be wrong, content can be junk), but doesn't dominate the dialog. Click "Full arguments" to expand.
+- Unknown/future tools fall through to just the `<details>` block (still readable, no regression).
+
+Test plan: refresh the UI, ask Pishkar to `ls`. You should see `$ ls` in a tidy block, plus a "Full arguments" toggle.
