@@ -277,7 +277,9 @@ def test_factory_returns_runner_when_configured(
     monkeypatch.setenv("TELEGRAM_OWNER_ID", "12345")
     factory = _telegram_factory_from_env(user_id="ali")
     assert factory is not None
+    from pishkar.gateway.user_registry import UserChannelRegistry
+
     fake_gw: Any = MagicMock()
-    runners = factory(fake_gw, None)
+    runners = factory(fake_gw, None, UserChannelRegistry())
     assert len(runners) == 1
     assert isinstance(runners[0], TelegramBotRunner)

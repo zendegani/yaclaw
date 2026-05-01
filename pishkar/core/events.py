@@ -151,6 +151,18 @@ class UserMessage(_EventBase):
     content: str
 
 
+class SessionChanged(_EventBase):
+    """A new session was created for `user_id` by `source_channel`. Sent
+    to every other live channel for that user so the UI can offer a switch
+    and Telegram can post a heads-up. `session_id` here is the *new* id —
+    `_EventBase` already requires it to be a string so we put it there."""
+
+    type: Literal["session_changed"] = "session_changed"
+    turn_id: str = ""
+    user_id: str
+    source_channel: str
+
+
 Event = Annotated[
     Union[
         TurnStart,
@@ -164,6 +176,7 @@ Event = Annotated[
         TurnEnd,
         ApprovalRequest,
         UserMessage,
+        SessionChanged,
     ],
     Field(discriminator="type"),
 ]

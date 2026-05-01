@@ -52,6 +52,12 @@ export interface UserMessageEvent extends EventBase {
   content: string;
 }
 
+export interface SessionChangedEvent extends EventBase {
+  type: "session_changed";
+  user_id: string;
+  source_channel: string;
+}
+
 export type Event =
   | TurnStart
   | MessageStart
@@ -63,7 +69,8 @@ export type Event =
   | ToolResult
   | TurnEnd
   | ApprovalRequest
-  | UserMessageEvent;
+  | UserMessageEvent
+  | SessionChangedEvent;
 
 export type ApprovalDecision = "allow_once" | "allow_session" | "deny";
 

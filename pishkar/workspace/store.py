@@ -257,18 +257,55 @@ class SessionStore:
         await self.db.commit()
 
     async def latest_session_for_user(self, user_id: str) -> str | None:
-        """Session id whose most recent message timestamp is newest for this
-        user, across any channel. Used to default new client connections to
-        a continuing thread instead of a fresh one."""
+        """Session id of the user's most recent activity. Considers both
+        the `sessions` table (so an empty just-created session counts) and
+        the `messages` table (so legacy sessions without an explicit row
+        still resolve)."""
         async with self.db.execute(
-            """SELECT session_id FROM messages
-               WHERE user_id = ?
-               ORDER BY timestamp DESC
-               LIMIT 1""",
-            (user_id,),
+            """SELECT session_id, MAX(t) AS t FROM (
+                   SELECT s.session_id, s.created_at AS t
+                   FROM sessions s WHERE s.user_id = ?
+                   UNION ALL
+                   SELECT m.session_id, MAX(m.timestamp) AS t
+                   FROM messages m WHERE m.user_id = ?
+                   GROUP BY m.session_id
+               ) GROUP BY session_id ORDER BY t DESC LIMIT 1""",
+            (user_id, user_id),
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else None
+
+    async def recent_sessions_for_user(
+        self, user_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Recent sessions for the user, newest first. Each entry: session_id,
+        created_at, last_activity, message_count, last_channel."""
+        async with self.db.execute(
+            """SELECT s.session_id, s.created_at,
+                      COALESCE(MAX(m.timestamp), s.created_at) AS last_activity,
+                      COUNT(m.message_id) AS message_count,
+                      (SELECT channel FROM messages
+                       WHERE session_id = s.session_id
+                       ORDER BY timestamp DESC LIMIT 1) AS last_channel
+               FROM sessions s
+               LEFT JOIN messages m ON m.session_id = s.session_id
+               WHERE s.user_id = ?
+               GROUP BY s.session_id
+               ORDER BY last_activity DESC
+               LIMIT ?""",
+            (user_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [
+            {
+                "session_id": r[0],
+                "created_at": r[1],
+                "last_activity": r[2],
+                "message_count": int(r[3]),
+                "last_channel": r[4],
+            }
+            for r in rows
+        ]
 
     async def session_history(self, session_id: str) -> list[dict[str, Any]]:
         async with self.db.execute(

@@ -21,7 +21,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ from pishkar.channels.ws import WebSocketDisconnect as ChannelWebSocketDisconnec
 from pishkar.core.events import (
     ContentBlockDelta,
     Event,
+    SessionChanged,
     TextDelta,
     TurnEnd,
     TurnStart,
@@ -43,6 +44,7 @@ from pishkar.core.messages import InboundMessage, OutboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway, Handler
 from pishkar.gateway.hooks import HookManager
+from pishkar.gateway.user_registry import UserChannelRegistry
 from pishkar.observability.sqlite_sink import SqliteSink
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
@@ -60,7 +62,7 @@ class ChannelRunner(Protocol):
 
 
 ChannelRunnerFactory = Callable[
-    [Gateway, ApprovalRouter | None], list[ChannelRunner]
+    [Gateway, ApprovalRouter | None, UserChannelRegistry], list[ChannelRunner]
 ]
 
 
@@ -72,16 +74,18 @@ def create_app(
     recovery_target: set[str] | None = None,
     approval_router: ApprovalRouter | None = None,
     channel_runner_factory: ChannelRunnerFactory | None = None,
+    user_registry: UserChannelRegistry | None = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
     sink.attach(hooks)
+    user_registry = user_registry or UserChannelRegistry()
 
     gateway = Gateway(
         store=store, handler=_wrap_handler(handler, sink, store), hooks=hooks
     )
     runners: list[ChannelRunner] = (
-        channel_runner_factory(gateway, approval_router)
+        channel_runner_factory(gateway, approval_router, user_registry)
         if channel_runner_factory is not None
         else []
     )
@@ -110,10 +114,29 @@ def create_app(
     app.state.store = store
     app.state.gateway = gateway
     app.state.hooks = hooks
+    app.state.user_registry = user_registry
 
     @app.get("/sessions/latest/{user_id}")
     async def _latest_session(user_id: str) -> dict[str, str | None]:
         return {"session_id": await store.latest_session_for_user(user_id)}
+
+    @app.get("/sessions/{user_id}")
+    async def _list_sessions(user_id: str) -> dict[str, Any]:
+        rows = await store.recent_sessions_for_user(user_id)
+        return {"sessions": rows}
+
+    @app.post("/sessions/new/{user_id}")
+    async def _new_session(user_id: str, source: str = "web") -> dict[str, str]:
+        session = await store.create_session(user_id)
+        await user_registry.broadcast(
+            user_id,
+            SessionChanged(
+                session_id=session.session_id,
+                user_id=user_id,
+                source_channel=source,
+            ),
+        )
+        return {"session_id": session.session_id}
 
     @app.websocket("/ws/{user_id}/{session_id}")
     async def _ws(
@@ -133,6 +156,7 @@ def create_app(
             control_handler=_make_control_handler(approval_router, session_id),
         )
         gateway.register_channel(session_id, channel)
+        await user_registry.register(user_id, session_id, channel.send_event)
         if approval_router is not None:
             approval_router.bind(session_id, channel.send_event)
         try:
@@ -143,6 +167,7 @@ def create_app(
         finally:
             if approval_router is not None:
                 approval_router.unbind(session_id)
+            await user_registry.unregister(user_id, channel.send_event)
             gateway.detach_channel(session_id, channel)
             await channel.close()
 
@@ -356,7 +381,9 @@ def _telegram_factory_from_env(*, user_id: str, store: SessionStore | None = Non
         return None
 
     def factory(
-        gateway: Gateway, approval_router: ApprovalRouter | None
+        gateway: Gateway,
+        approval_router: ApprovalRouter | None,
+        user_registry: UserChannelRegistry,
     ) -> list[ChannelRunner]:
         from pishkar.channels.telegram import TelegramBotRunner
 
@@ -368,6 +395,7 @@ def _telegram_factory_from_env(*, user_id: str, store: SessionStore | None = Non
                 gateway=gateway,
                 approval_router=approval_router,
                 store=store,
+                user_registry=user_registry,
             )
         ]
 

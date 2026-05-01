@@ -34,12 +34,14 @@ from pishkar.core.events import (
     ApprovalRequest,
     ContentBlockDelta,
     Event,
+    SessionChanged,
     TextDelta,
     TurnEnd,
 )
 from pishkar.core.messages import InboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway
+from pishkar.gateway.user_registry import UserChannelRegistry
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
 
@@ -64,11 +66,20 @@ class TelegramChannel:
         *,
         chat_id: int,
         send_message: SendMessage,
+        session_id: str = "",
     ) -> None:
         self._chat_id = chat_id
         self._send_message = send_message
+        self._session_id = session_id
         self._buffer: list[str] = []
         self._closed = False
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def set_session_id(self, session_id: str) -> None:
+        self._session_id = session_id
 
     async def inbound(self) -> AsyncIterator[InboundMessage]:
         if False:  # pragma: no cover — keeps the signature an async-gen
@@ -103,6 +114,22 @@ class TelegramChannel:
             await self._safe_send(
                 text=_approval_message(event.tool_name, event.input),
                 reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+            return
+        if isinstance(event, SessionChanged):
+            # Only react when the new session is somewhere *other* than the
+            # one this chat is currently attached to. Keeps the originator
+            # quiet — they already know they just /new'd.
+            if event.session_id == self._session_id:
+                return
+            short = event.session_id[:8]
+            await self._safe_send(
+                text=(
+                    f"🔔 {event.source_channel} started a new session "
+                    f"(<code>{html.escape(short)}</code>). "
+                    "Send /switch to follow, or keep replying here."
+                ),
                 parse_mode="HTML",
             )
 
@@ -167,6 +194,7 @@ class TelegramBotRunner:
         gateway: Gateway,
         approval_router: ApprovalRouter | None = None,
         store: SessionStore | None = None,
+        user_registry: UserChannelRegistry | None = None,
     ) -> None:
         self._token = token
         self._owner_id = owner_id
@@ -174,6 +202,7 @@ class TelegramBotRunner:
         self._gateway = gateway
         self._approval_router = approval_router
         self._store = store
+        self._user_registry = user_registry
         self._app: Application | None = None
         self._sessions: dict[int, str] = {}
         self._channels: dict[int, TelegramChannel] = {}
@@ -182,6 +211,8 @@ class TelegramBotRunner:
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("start", self._on_start))
         app.add_handler(CommandHandler("new", self._on_new))
+        app.add_handler(CommandHandler("sessions", self._on_sessions))
+        app.add_handler(CommandHandler("switch", self._on_switch))
         app.add_handler(CallbackQueryHandler(self._on_callback))
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
@@ -208,6 +239,10 @@ class TelegramBotRunner:
                 self._gateway.detach_channel(session_id, channel)
                 if self._approval_router is not None:
                     self._approval_router.unbind(session_id)
+            if self._user_registry is not None:
+                await self._user_registry.unregister(
+                    self._user_id, channel.send_event
+                )
             await channel.close()
         self._channels.clear()
         self._sessions.clear()
@@ -234,8 +269,88 @@ class TelegramBotRunner:
         if not self._is_owner(update) or update.message is None:
             return
         chat_id = update.message.chat_id
-        await self._rotate_session(chat_id)
+        new_id = await self._mint_session()
+        await self._rotate_session(chat_id, session_id=new_id)
+        if self._user_registry is not None:
+            await self._user_registry.broadcast(
+                self._user_id,
+                SessionChanged(
+                    session_id=new_id,
+                    user_id=self._user_id,
+                    source_channel="telegram",
+                ),
+                exclude_session=new_id,
+            )
         await update.message.reply_text("Started a fresh session.")
+
+    async def _on_sessions(
+        self, update: Update, _: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update) or update.message is None:
+            return
+        if self._store is None:
+            await update.message.reply_text("Session store unavailable.")
+            return
+        rows = await self._store.recent_sessions_for_user(self._user_id, limit=10)
+        if not rows:
+            await update.message.reply_text("No sessions yet.")
+            return
+        chat_id = update.message.chat_id
+        current = self._sessions.get(chat_id)
+        lines = ["Recent sessions:"]
+        for r in rows:
+            sid = r["session_id"]
+            marker = " ← current" if sid == current else ""
+            lines.append(
+                f"<code>{html.escape(sid[:8])}</code> "
+                f"({r['message_count']} msgs, {r['last_channel'] or '—'})"
+                f"{marker}"
+            )
+        lines.append("Use <code>/switch &lt;prefix&gt;</code> or <code>/switch latest</code>.")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def _on_switch(
+        self, update: Update, ctx: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update) or update.message is None:
+            return
+        if self._store is None:
+            await update.message.reply_text("Session store unavailable.")
+            return
+        args = ctx.args or []
+        chat_id = update.message.chat_id
+        target = await self._resolve_switch_target(args)
+        if target is None:
+            await update.message.reply_text(
+                "Usage: /switch latest  or  /switch <id-prefix>"
+            )
+            return
+        if target == self._sessions.get(chat_id):
+            await update.message.reply_text("Already on that session.")
+            return
+        await self._rotate_session(chat_id, session_id=target)
+        await update.message.reply_text(
+            f"Switched to session {target[:8]}."
+        )
+
+    async def _resolve_switch_target(self, args: list[str]) -> str | None:
+        assert self._store is not None
+        if not args:
+            return None
+        token = args[0].strip().lower()
+        if token == "latest":
+            return await self._store.latest_session_for_user(self._user_id)
+        rows = await self._store.recent_sessions_for_user(self._user_id, limit=50)
+        for r in rows:
+            if r["session_id"].startswith(token):
+                return r["session_id"]
+        return None
+
+    async def _mint_session(self) -> str:
+        if self._store is None:
+            return str(uuid4())
+        session = await self._store.create_session(self._user_id)
+        return session.session_id
 
     async def _on_message(
         self, update: Update, _: ContextTypes.DEFAULT_TYPE
@@ -291,31 +406,44 @@ class TelegramBotRunner:
         session_id: str | None = None
         if self._store is not None:
             session_id = await self._store.latest_session_for_user(self._user_id)
-        return self._open_session(chat_id, session_id=session_id)
+        return await self._open_session(chat_id, session_id=session_id)
 
-    def _open_session(self, chat_id: int, *, session_id: str | None = None) -> str:
+    async def _open_session(
+        self, chat_id: int, *, session_id: str | None = None
+    ) -> str:
         assert self._app is not None
         sid = session_id or str(uuid4())
         channel = TelegramChannel(
             chat_id=chat_id,
             send_message=self._app.bot.send_message,
+            session_id=sid,
         )
         self._sessions[chat_id] = sid
         self._channels[chat_id] = channel
         self._gateway.register_channel(sid, channel)
         if self._approval_router is not None:
             self._approval_router.bind(sid, channel.send_event)
+        if self._user_registry is not None:
+            await self._user_registry.register(
+                self._user_id, sid, channel.send_event
+            )
         return sid
 
-    async def _rotate_session(self, chat_id: int) -> None:
+    async def _rotate_session(
+        self, chat_id: int, *, session_id: str | None = None
+    ) -> None:
         old_channel = self._channels.pop(chat_id, None)
         old_session = self._sessions.pop(chat_id, None)
         if old_channel is not None and old_session is not None:
             self._gateway.detach_channel(old_session, old_channel)
             if self._approval_router is not None:
                 self._approval_router.unbind(old_session)
+            if self._user_registry is not None:
+                await self._user_registry.unregister(
+                    self._user_id, old_channel.send_event
+                )
             await old_channel.close()
-        self._open_session(chat_id)
+        await self._open_session(chat_id, session_id=session_id)
 
 
 __all__ = ["TelegramBotRunner", "TelegramChannel"]

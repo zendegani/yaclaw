@@ -34,13 +34,33 @@ async function resolveSessionId(): Promise<string> {
   return fresh;
 }
 
-export function newSession(): void {
-  localStorage.setItem(SESSION_KEY, crypto.randomUUID());
+export async function newSession(): Promise<void> {
+  // Mint server-side so other channels see the SessionChanged broadcast.
+  try {
+    const res = await fetch(`/sessions/new/${USER_ID}?source=web`, { method: "POST" });
+    if (res.ok) {
+      const data = (await res.json()) as { session_id: string };
+      localStorage.setItem(SESSION_KEY, data.session_id);
+    } else {
+      localStorage.setItem(SESSION_KEY, crypto.randomUUID());
+    }
+  } catch {
+    localStorage.setItem(SESSION_KEY, crypto.randomUUID());
+  }
+  window.location.reload();
+}
+
+export function switchSession(session_id: string): void {
+  localStorage.setItem(SESSION_KEY, session_id);
   window.location.reload();
 }
 
 export function getSessionId(): string {
   return localStorage.getItem(SESSION_KEY) ?? "";
+}
+
+export function getUserId(): string {
+  return USER_ID;
 }
 
 const SocketContext = createContext<PishkarSocket | null>(null);

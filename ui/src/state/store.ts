@@ -31,12 +31,19 @@ export interface PendingApproval {
   input: Record<string, unknown>;
 }
 
+export interface SessionAvailable {
+  session_id: string;
+  source_channel: string;
+  ts: number;
+}
+
 interface State {
   items: ChatItem[];
   status: "connecting" | "open" | "closed";
   raw: RawEntry[];
   totals: { inputTokens: number; outputTokens: number; turns: number };
   approvals: PendingApproval[];
+  sessionAvailable: SessionAvailable | null;
 }
 
 let state: State = {
@@ -45,6 +52,7 @@ let state: State = {
   raw: [],
   totals: { inputTokens: 0, outputTokens: 0, turns: 0 },
   approvals: [],
+  sessionAvailable: null,
 };
 const listeners = new Set<() => void>();
 
@@ -150,6 +158,21 @@ export function applyEvent(event: Event): void {
       setState({ ...state, items: next, raw, totals });
       return;
     }
+    case "session_changed": {
+      // Pishkar's other channel just opened a new session. Surface the
+      // option but don't auto-switch — the user might be mid-thought here.
+      setState({
+        ...state,
+        raw,
+        totals,
+        sessionAvailable: {
+          session_id: event.session_id,
+          source_channel: event.source_channel,
+          ts: Date.now(),
+        },
+      });
+      return;
+    }
     case "approval_request": {
       const approvals = [
         ...state.approvals,
@@ -186,6 +209,10 @@ export function setStatus(status: State["status"]): void {
 
 export function clearRaw(): void {
   setState({ ...state, raw: [] });
+}
+
+export function dismissSessionAvailable(): void {
+  setState({ ...state, sessionAvailable: null });
 }
 
 export function dismissApproval(request_id: string): void {
