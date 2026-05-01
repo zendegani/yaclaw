@@ -66,6 +66,10 @@ uv run python -m pishkar.server
 
 To keep it running after logout, wrap it in a systemd unit pointing at `uv run --directory /path/to/yaclaw python -m pishkar.server`. The Pi only needs to reach the LLM provider's API and Telegram; no inbound ports.
 
+To access the Web UI from your laptop, you can forward the ports over SSH:
+`ssh -L 5173:localhost:5173 -L 8765:localhost:8765 user@server-address`
+Then open <http://localhost:5173> on your laptop.
+
 ## Where your data lives
 
 - `~/.pishkar/sessions.db` — SQLite log (messages, turns, tool calls, events)
