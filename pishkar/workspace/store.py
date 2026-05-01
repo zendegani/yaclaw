@@ -256,6 +256,20 @@ class SessionStore:
         )
         await self.db.commit()
 
+    async def latest_session_for_user(self, user_id: str) -> str | None:
+        """Session id whose most recent message timestamp is newest for this
+        user, across any channel. Used to default new client connections to
+        a continuing thread instead of a fresh one."""
+        async with self.db.execute(
+            """SELECT session_id FROM messages
+               WHERE user_id = ?
+               ORDER BY timestamp DESC
+               LIMIT 1""",
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else None
+
     async def session_history(self, session_id: str) -> list[dict[str, Any]]:
         async with self.db.execute(
             """SELECT message_id, direction, content, channel, timestamp, metadata_json

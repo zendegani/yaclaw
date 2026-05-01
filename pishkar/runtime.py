@@ -95,36 +95,57 @@ def build_handler(
             gates[session_id] = gate
         return SubprocessToolRunner(registry, hooks=hooks, approval_fn=gate.check)
 
+    async def _hydrate(session_id: str) -> list[dict[str, Any]]:
+        if store is None:
+            return []
+        rows = await store.session_history(session_id)
+        history: list[dict[str, Any]] = []
+        for row in rows:
+            role = "user" if row["direction"] == "inbound" else "assistant"
+            history.append({"role": role, "content": row["content"]})
+        return history
+
+    async def _ensure_history(session_id: str) -> list[dict[str, Any]]:
+        if session_id in histories:
+            return histories[session_id]
+        history = await _hydrate(session_id)
+        histories[session_id] = history
+        return history
+
     def handler(msg: InboundMessage) -> AsyncIterator[Event]:
-        history = histories.setdefault(msg.session_id, [])
-        turn_runner = _runner_for(msg.session_id, msg.user_id)
-        # Re-read the workspace per turn so edits the agent makes to
-        # USER.md take effect on the next turn without a server restart.
-        if workspace_loader is not None:
-            ws = workspace_loader.load(msg.user_id)
-            turn_system = compose_system_prompt(ws, base=system)
-        else:
-            turn_system = system
-        if msg.session_id in interrupted:
-            turn_system = (
-                turn_system
-                + "\n\n# Recovery notice\n\n"
-                + "The previous turn in this session was interrupted before it "
-                + "completed (server crash, restart, or kill). Decide whether to "
-                + "retry the prior request, abandon it, or just acknowledge — the "
-                + "user has not been told."
-            )
-            interrupted.discard(msg.session_id)
-        return run_turn(
-            user_message=msg,
-            history=history,
-            provider=provider,
-            runner=turn_runner,
-            tool_schemas=tool_schemas,
-            system=turn_system,
-            model=model,
-            hooks=hooks,
-        )
+        async def gen() -> AsyncIterator[Event]:
+            history = await _ensure_history(msg.session_id)
+            turn_runner = _runner_for(msg.session_id, msg.user_id)
+            # Re-read the workspace per turn so edits the agent makes to
+            # USER.md take effect on the next turn without a server restart.
+            if workspace_loader is not None:
+                ws = workspace_loader.load(msg.user_id)
+                turn_system = compose_system_prompt(ws, base=system)
+            else:
+                turn_system = system
+            if msg.session_id in interrupted:
+                turn_system = (
+                    turn_system
+                    + "\n\n# Recovery notice\n\n"
+                    + "The previous turn in this session was interrupted before it "
+                    + "completed (server crash, restart, or kill). Decide whether to "
+                    + "retry the prior request, abandon it, or just acknowledge — the "
+                    + "user has not been told."
+                )
+                interrupted.discard(msg.session_id)
+            async for event in run_turn(
+                user_message=msg,
+                history=history,
+                provider=provider,
+                runner=turn_runner,
+                tool_schemas=tool_schemas,
+                system=turn_system,
+                model=model,
+                hooks=hooks,
+            ):
+                yield event
+
+        return gen()
 
     return handler
 

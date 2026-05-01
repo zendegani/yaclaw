@@ -41,6 +41,7 @@ from pishkar.core.messages import InboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway
 from pishkar.tools.approval_gate import ApprovalDecision
+from pishkar.workspace.store import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -165,12 +166,14 @@ class TelegramBotRunner:
         user_id: str,
         gateway: Gateway,
         approval_router: ApprovalRouter | None = None,
+        store: SessionStore | None = None,
     ) -> None:
         self._token = token
         self._owner_id = owner_id
         self._user_id = user_id
         self._gateway = gateway
         self._approval_router = approval_router
+        self._store = store
         self._app: Application | None = None
         self._sessions: dict[int, str] = {}
         self._channels: dict[int, TelegramChannel] = {}
@@ -242,7 +245,7 @@ class TelegramBotRunner:
         if update.message is None or not update.message.text:
             return
         chat_id = update.message.chat_id
-        session_id = self._ensure_channel(chat_id)
+        session_id = await self._ensure_channel(chat_id)
         msg = InboundMessage(
             user_id=self._user_id,
             session_id=session_id,
@@ -279,24 +282,30 @@ class TelegramBotRunner:
 
     # ---- session lifecycle ----------------------------------------------
 
-    def _ensure_channel(self, chat_id: int) -> str:
+    async def _ensure_channel(self, chat_id: int) -> str:
         if chat_id in self._sessions:
             return self._sessions[chat_id]
-        return self._open_session(chat_id)
+        # Prefer the user's most recent session across any channel so a
+        # phone-then-laptop conversation continues seamlessly. Falls back
+        # to a fresh uuid when the user has never spoken before.
+        session_id: str | None = None
+        if self._store is not None:
+            session_id = await self._store.latest_session_for_user(self._user_id)
+        return self._open_session(chat_id, session_id=session_id)
 
-    def _open_session(self, chat_id: int) -> str:
+    def _open_session(self, chat_id: int, *, session_id: str | None = None) -> str:
         assert self._app is not None
-        session_id = str(uuid4())
+        sid = session_id or str(uuid4())
         channel = TelegramChannel(
             chat_id=chat_id,
             send_message=self._app.bot.send_message,
         )
-        self._sessions[chat_id] = session_id
+        self._sessions[chat_id] = sid
         self._channels[chat_id] = channel
-        self._gateway.register_channel(session_id, channel)
+        self._gateway.register_channel(sid, channel)
         if self._approval_router is not None:
-            self._approval_router.bind(session_id, channel.send_event)
-        return session_id
+            self._approval_router.bind(sid, channel.send_event)
+        return sid
 
     async def _rotate_session(self, chat_id: int) -> None:
         old_channel = self._channels.pop(chat_id, None)

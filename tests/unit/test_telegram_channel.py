@@ -179,9 +179,9 @@ def _make_runner(gw: Gateway, *, owner_id: int = 100) -> TelegramBotRunner:
 
 async def test_runner_opens_one_session_per_chat(gateway: Gateway) -> None:
     runner = _make_runner(gateway)
-    sid_a = runner._ensure_channel(chat_id=1)
-    sid_a_again = runner._ensure_channel(chat_id=1)
-    sid_b = runner._ensure_channel(chat_id=2)
+    sid_a = await runner._ensure_channel(chat_id=1)
+    sid_a_again = await runner._ensure_channel(chat_id=1)
+    sid_b = await runner._ensure_channel(chat_id=2)
     assert sid_a == sid_a_again
     assert sid_a != sid_b
     # Each chat got one channel registered with the gateway.
@@ -191,7 +191,7 @@ async def test_runner_opens_one_session_per_chat(gateway: Gateway) -> None:
 
 async def test_runner_rotates_session_on_new(gateway: Gateway) -> None:
     runner = _make_runner(gateway)
-    old_sid = runner._ensure_channel(chat_id=1)
+    old_sid = await runner._ensure_channel(chat_id=1)
     old_channel = runner._channels[1]
     await runner._rotate_session(chat_id=1)
     new_sid = runner._sessions[1]
@@ -207,7 +207,7 @@ async def test_runner_callback_resolves_approval(gateway: Gateway) -> None:
     import asyncio
 
     runner = _make_runner(gateway)
-    sid = runner._ensure_channel(chat_id=1)
+    sid = await runner._ensure_channel(chat_id=1)
     router = runner._approval_router
     assert router is not None
 

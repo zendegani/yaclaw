@@ -31,8 +31,15 @@ from starlette.websockets import WebSocketState
 
 from pishkar.channels.ws import WebSocketChannel
 from pishkar.channels.ws import WebSocketDisconnect as ChannelWebSocketDisconnect
-from pishkar.core.events import Event, TurnEnd, TurnStart, UserMessage
-from pishkar.core.messages import InboundMessage
+from pishkar.core.events import (
+    ContentBlockDelta,
+    Event,
+    TextDelta,
+    TurnEnd,
+    TurnStart,
+    UserMessage,
+)
+from pishkar.core.messages import InboundMessage, OutboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway, Handler
 from pishkar.gateway.hooks import HookManager
@@ -70,7 +77,9 @@ def create_app(
     sink = SqliteSink(store)
     sink.attach(hooks)
 
-    gateway = Gateway(store=store, handler=_wrap_handler(handler, sink), hooks=hooks)
+    gateway = Gateway(
+        store=store, handler=_wrap_handler(handler, sink, store), hooks=hooks
+    )
     runners: list[ChannelRunner] = (
         channel_runner_factory(gateway, approval_router)
         if channel_runner_factory is not None
@@ -101,6 +110,10 @@ def create_app(
     app.state.store = store
     app.state.gateway = gateway
     app.state.hooks = hooks
+
+    @app.get("/sessions/latest/{user_id}")
+    async def _latest_session(user_id: str) -> dict[str, str | None]:
+        return {"session_id": await store.latest_session_for_user(user_id)}
 
     @app.websocket("/ws/{user_id}/{session_id}")
     async def _ws(
@@ -157,10 +170,15 @@ def _make_control_handler(
     return handle
 
 
-def _wrap_handler(handler: Handler, sink: SqliteSink) -> Handler:
+def _wrap_handler(handler: Handler, sink: SqliteSink, store: SessionStore) -> Handler:
     """Echo the user's message as an event, then tee every assistant
     event through the always-on SQLite log so replay rebuilds the full
     chat (user side included).
+
+    Also accumulates assistant text deltas during the turn and records
+    one outbound `messages` row at TurnEnd. That gives `messages` a
+    complete user/assistant transcript per session, which the runtime
+    uses to hydrate history on cold start.
 
     A handler exception (e.g. provider 429, network blip) is converted
     into a `TurnEnd(stop_reason="error")` so the UI sees the turn close
@@ -176,9 +194,27 @@ def _wrap_handler(handler: Handler, sink: SqliteSink) -> Handler:
             )
             await sink.write_event(user_event)
             yield user_event
+            text_buf: list[str] = []
             try:
                 async for event in handler(msg):
                     await sink.write_event(event)
+                    if isinstance(event, ContentBlockDelta) and isinstance(
+                        event.delta, TextDelta
+                    ):
+                        text_buf.append(event.delta.text)
+                    elif isinstance(event, TurnEnd):
+                        text = "".join(text_buf).strip()
+                        text_buf.clear()
+                        if text:
+                            with contextlib.suppress(Exception):
+                                await store.record_outbound(
+                                    OutboundMessage(
+                                        user_id=msg.user_id,
+                                        session_id=msg.session_id,
+                                        channel=msg.channel,
+                                        content=text,
+                                    )
+                                )
                     yield event
             except Exception:
                 logger.exception("handler failed for session %s", msg.session_id)
@@ -297,12 +333,13 @@ def main() -> None:
         approval_router=approval_router,
         channel_runner_factory=_telegram_factory_from_env(
             user_id=os.environ.get("PISHKAR_USER", "user"),
+            store=store,
         ),
     )
     uvicorn.run(app, host="127.0.0.1", port=8765)
 
 
-def _telegram_factory_from_env(*, user_id: str):
+def _telegram_factory_from_env(*, user_id: str, store: SessionStore | None = None):
     """Return a channel-runner factory if `TELEGRAM_BOT_TOKEN` is set,
     otherwise None. The runner is constructed lazily inside `create_app`
     so it can take the gateway built there."""
@@ -330,6 +367,7 @@ def _telegram_factory_from_env(*, user_id: str):
                 user_id=user_id,
                 gateway=gateway,
                 approval_router=approval_router,
+                store=store,
             )
         ]
 
