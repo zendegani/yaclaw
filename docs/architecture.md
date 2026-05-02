@@ -217,13 +217,16 @@ Approximately three of the fifteen projects integrate with a third-party LLM obs
 
 For a personal butler that holds a `USER.md` of facts and may eventually access calendar, email, and banking, **data sovereignty narrows the realistic options**. SaaS LLM-tracing platforms (LangFuse cloud, Helicone, Phoenix Arize cloud, OpenTelemetry → Honeycomb/Datadog) put a third party between the agent and its telemetry, which is inconsistent with the privacy posture of a system that holds personal context.
 
-Local-only (SQLite + a CLI replay tool) is sufficient for the literal "see everything" requirement. LangFuse self-hosted adds a real visualization UI — flame graphs, cost dashboards, trace inspection — without giving up data sovereignty.
+Local-only (SQLite + a CLI replay tool) is sufficient for the literal "see everything" requirement. A self-hosted visualization UI — flame graphs, cost dashboards, trace inspection — adds real iteration value without giving up data sovereignty. Two self-hostable options realistically fit:
+
+* **Arize Phoenix self-hosted** — single container, OTel-native, ~300 MB resident, persists to a mounted SQLite volume. Trace- and eval-focused UI; lighter cost dashboards. Fits comfortably on an SBC like a Raspberry Pi 5 8 GB alongside the butler itself.
+* **LangFuse self-hosted** — richer prompt-management, analytics, and cost dashboards. The current default (`:latest` / v3) requires ClickHouse, which alone wants ~8 GB RAM and is inappropriate for SBC deployment; pinning to `langfuse/langfuse:2` (Postgres-only, ~1.5–2 GB) keeps the option viable on smaller hosts, and the v3 footprint is fine on a VPS with the headroom.
 
 A detail worth being explicit about: the Hooks layer must be **fail-open**. If the observability backend is slow or down, the agent loop must not stall. Emission is wrapped in `asyncio.create_task` with a swallowed-exception handler. Cheap now, painful later when a sluggish exporter freezes the butler.
 
 ### Pishkar's adopted approach
 
-**Local SQLite append-only log + LangFuse self-hosted in Docker.** Per-Hook events are emitted to two destinations: (a) the always-on SQLite log (cannot be lost even if LangFuse is down), and (b) a local LangFuse instance running in Docker on the same machine, exposing prompt/response/tool-call traces, latency histograms, and token-cost dashboards. The LangFuse exporter is fail-open. The Hooks seam stays generic so a second backend (e.g., OpenTelemetry to a future Honeycomb account) can be added later without touching the agent loop.
+**Local SQLite append-only log + a pluggable self-hosted trace backend in Docker, defaulting to Arize Phoenix.** Per-Hook events are emitted to two destinations: (a) the always-on SQLite log (cannot be lost even if the trace UI is down), and (b) a local trace backend running in Docker on the same machine, exposing prompt/response/tool-call traces, latency histograms, and token-cost views. Phoenix is the day-one default because it fits SBC hosts (Raspberry Pi 5 8 GB) without contention; LangFuse is supported as a configuration-only swap (`[observability] backend = "langfuse"`) for operators on a VPS who want its richer prompt-management and cost dashboards. Either exporter is fail-open. The Hooks seam stays generic so further backends (e.g., direct OpenTelemetry to a future Honeycomb account) can be added later without touching the agent loop.
 
 ---
 
@@ -252,7 +255,7 @@ Applying the same data-sovereignty filter that motivated LangFuse self-hosted, t
 
 ### Pishkar's adopted approach
 
-**LiteLLM as a Python library + LiteLLM `Router` for failover.** A single `LiteLLMProvider` wraps `litellm.acompletion(...)` behind the `ModelProvider` interface. Day-one configuration: Anthropic primary; OpenAI fallback via `litellm.Router(fallbacks=[...])` with the Mercury-style "remember last successful" flag. Adding Ollama, Cohere, Bedrock, Mistral, or local models is a configuration string change. LiteLLM's built-in LangFuse callbacks compose with the observability layer chosen in §7 — token cost and provider attribution flow into LangFuse without extra wiring.
+**LiteLLM as a Python library + LiteLLM `Router` for failover.** A single `LiteLLMProvider` wraps `litellm.acompletion(...)` behind the `ModelProvider` interface. Day-one configuration: Anthropic primary; OpenAI fallback via `litellm.Router(fallbacks=[...])` with the Mercury-style "remember last successful" flag. Adding Ollama, Cohere, Bedrock, Mistral, or local models is a configuration string change. LiteLLM's built-in trace callbacks (`arize_phoenix`, `langfuse`, and others) compose with the observability layer chosen in §7 — token cost and provider attribution flow into whichever backend is configured without extra wiring.
 
 The proxy mode (Docker) remains an upgrade path if shared caching or cross-client observability becomes worthwhile. The seam is configuration-only: the same `LiteLLMProvider`, with `base_url` pointed at a local proxy.
 
@@ -436,7 +439,7 @@ How the runtime actually runs day-to-day — manual command, OS service, Docker 
 
 ### Trade-offs
 
-Manual invocation is right for active development and iteration; the cost is bad UX for an "always-on butler." OS-native daemon is the pattern Mercury uses and the analysis recommends — clean upgrade path from manual since the entrypoint is a single stable command. Docker compose is appealing because LangFuse already requires Docker; bundling Pishkar in the same stack is operationally clean but adds Docker as a hard dependency for Pishkar code itself, complicating local debugging cycles.
+Manual invocation is right for active development and iteration; the cost is bad UX for an "always-on butler." OS-native daemon is the pattern Mercury uses and the analysis recommends — clean upgrade path from manual since the entrypoint is a single stable command. Docker compose is appealing because the trace backend (Phoenix or LangFuse) already requires Docker; bundling Pishkar in the same stack is operationally clean but adds Docker as a hard dependency for Pishkar code itself, complicating local debugging cycles.
 
 The seam to reserve from day one is that the entrypoint is one stable command — `python -m pishkar.server` — that works unchanged whether run by a developer in a terminal or by `launchd`/`systemd` later.
 
@@ -452,19 +455,19 @@ Cost dashboards are largely already addressed by the decisions in §5 (governanc
 
 ### What is already in scope
 
-* **LangFuse self-hosted** (§7) — per-call, per-trace, per-user cost; daily/weekly/monthly dashboards; cost-by-model and cost-by-tool attribution; trends over time.
+* **Self-hosted trace backend** (§7) — per-call, per-trace, per-user cost; cost-by-model and cost-by-tool attribution; trends over time. Phoenix (default) gives per-trace token cost and basic aggregation; LangFuse gives richer daily/weekly/monthly dashboards out of the box. Operators who want the latter swap the backend via config.
 * **`BudgetedProvider`** (§5) — daily token budget with auto-concise mode at 70%; tracked per `user_id` (§9).
 * **Hooks layer** — the seam for any further cost-aware features.
 
 ### Possible additions
 
 * **Cost alerts** — notifications at 50% / 80% / 100% of the daily budget; emitted as synthetic messages into the agent loop ("budget at 80% today, want to switch to a cheaper model?") or as desktop notifications. About half a day.
-* **Custom cost panel in the Web UI** — a summary card showing today's spend, monthly trend, top tool/model by cost. About one to two days; pulls from LangFuse's API or from `BudgetedProvider` state directly.
+* **Custom cost panel in the Web UI** — a summary card showing today's spend, monthly trend, top tool/model by cost. About one to two days; pulls from the trace backend's API (Phoenix or LangFuse) or from `BudgetedProvider` state directly.
 * **Cost-aware routing** (PicoClaw style) — cheap model for simple tasks, premium for complex. Optimization rather than visualization; deferred per §8 (LiteLLM Router supports it later as a configuration change).
 
 ### Pishkar's adopted approach
 
-**Deferred.** The combination of LangFuse self-hosted plus `BudgetedProvider` covers the day-one need. The four extra options above stay live for revisitation when friction is concrete — most likely cost alerts after the first runaway-loop incident.
+**Deferred.** The combination of the self-hosted trace backend plus `BudgetedProvider` covers the day-one need. The four extra options above stay live for revisitation when friction is concrete — most likely cost alerts after the first runaway-loop incident, or upgrading to LangFuse if the Phoenix default's cost views start feeling thin.
 
 ---
 
@@ -523,7 +526,7 @@ Pishkar's adopted approach reflects this convergence:
 * **Web UI + CLI as a WebSocket client** day one; Telegram and other channels as additive `Channel` implementations.
 * **Mercury-equivalent governance** (approval gate + token budget + loop guard + max-turn budget) built into the `ToolRunner` and `ModelProvider` seams.
 * **Native `@tool` + MCP bridge** for tool extensibility.
-* **Local SQLite log + LangFuse self-hosted** for observability with data sovereignty.
+* **Local SQLite log + pluggable self-hosted trace backend** (Phoenix default; LangFuse opt-in for VPS) for observability with data sovereignty.
 * **LiteLLM library + Router failover** for multi-provider support without per-provider code.
 * **`user_id` reservation** for multi-user, with single-user UX day one.
 * **`TriggerSource` abstraction + HEARTBEAT.md** for proactive behavior, with cheap-tick design avoiding per-minute LLM cost.

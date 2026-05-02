@@ -4,7 +4,7 @@ Concrete artifacts derived from the architectural decisions documented in `archi
 
 ## Hexagonal architecture
 
-The runtime is organized around five core concerns surrounded by pluggable adapters. Channels and Triggers feed `InboundMessage` events into the Gateway; the Gateway routes by session into the Agent Loop; the Agent Loop calls the Model Provider, the Tool Registry, and the Workspace; tool execution flows through the Tool Runner; observability events fan out to SQLite and LangFuse via the Hooks layer.
+The runtime is organized around five core concerns surrounded by pluggable adapters. Channels and Triggers feed `InboundMessage` events into the Gateway; the Gateway routes by session into the Agent Loop; the Agent Loop calls the Model Provider, the Tool Registry, and the Workspace; tool execution flows through the Tool Runner; observability events fan out to SQLite and a pluggable LLM-trace backend (Arize Phoenix by default; LangFuse as an opt-in alternative on hosts with the RAM headroom) via the Hooks layer.
 
 ```
        ┌──────────────────────────────────────────────────┐
@@ -55,9 +55,12 @@ The runtime is organized around five core concerns surrounded by pluggable adapt
    │   Hooks    │                       │    Tests         │
    │ (fail-open)│                       │   unit / integ   │
    │            │   ┌──────────────┐    │   MockLiteLLM    │
-   │  ► SQLite  │   │  LangFuse    │    │   replay (later) │
-   │    audit   │──►│  self-hosted │    └──────────────────┘
-   │  ► LangFuse│   │  (Docker)    │
+   │  ► SQLite  │   │  Phoenix     │    │   replay (later) │
+   │    audit   │──►│  (Docker)    │    └──────────────────┘
+   │  ► trace   │   │  — default;  │
+   │    sink    │   │  LangFuse    │
+   │            │   │  swap-in for │
+   │            │   │  VPS hosts   │
    └────────────┘   └──────────────┘
 ```
 
@@ -106,7 +109,8 @@ pishkar/
 ├── observability/
 │   ├── exporter.py           # fail-open async fan-out
 │   ├── sqlite_sink.py        # always-on append-only audit
-│   └── langfuse_sink.py      # LiteLLM callback wired through Hooks
+│   ├── phoenix_sink.py       # default trace sink (LiteLLM callback)
+│   └── langfuse_sink.py      # opt-in alternative for VPS hosts
 ├── server.py                 # FastAPI + WebSocket; one stable entrypoint
 └── cli.py                    # `pishkar serve` / `pishkar chat` / `pishkar backup`
 ```
@@ -137,7 +141,8 @@ tests/
 
 ```
 deploy/
-├── docker-compose.yml        # LangFuse self-hosted stack
+├── docker-compose.phoenix.yml   # default: Arize Phoenix (single container)
+├── docker-compose.langfuse.yml  # alternative: LangFuse self-hosted (VPS)
 └── README.md
 ```
 
@@ -147,11 +152,11 @@ The TypeScript event types are generated from the Pydantic models with `pydantic
 
 A sequenced punch list derived from the decisions in `architecture.md`. Roughly two weeks of work on a single developer.
 
-1. **Project scaffolding.** `pyproject.toml`, source layout above, pre-commit hooks (ruff, mypy), `.gitignore` covering `secrets.env`, `sessions.db-shm`, `sessions.db-wal`, LangFuse Docker volume.
+1. **Project scaffolding.** `pyproject.toml`, source layout above, pre-commit hooks (ruff, mypy), `.gitignore` covering `secrets.env`, `sessions.db-shm`, `sessions.db-wal`, trace-backend Docker volumes.
 2. **Core types.** `events.py` (streaming events mirroring Anthropic's API shape), `messages.py` with `InboundMessage` / `OutboundMessage` carrying `user_id`, `trust_level`, and a free-form `metadata` dict.
 3. **Workspace loader.** Reads `~/.pishkar/users/<user_id>/SOUL.md`, `AGENTS.md`, `USER.md`, `skills/<name>/SKILL.md`. Atomic writes via temp-file + `os.replace`.
 4. **SQLite session store.** Single DB, append-only, columns include `user_id` and `session_id`. Tables: `sessions`, `messages`, `tool_calls`, `tool_results`, `governance_decisions` (approval-gate audit), `token_spend`.
-5. **`ModelProvider` Protocol + `LiteLLMProvider`.** Wraps `litellm.acompletion`. `litellm.Router` configured with Anthropic primary, OpenAI fallback, "remember last successful." Built-in LangFuse callback wired.
+5. **`ModelProvider` Protocol + `LiteLLMProvider`.** Wraps `litellm.acompletion`. `litellm.Router` configured with Anthropic primary, OpenAI fallback, "remember last successful." Built-in trace callback wired through `litellm.success_callback` (Phoenix by default; LangFuse if `config.toml` selects it).
 6. **`BudgetedProvider`.** Wraps `ModelProvider`. Enforces daily token budget per `user_id`, switches to auto-concise mode at 70% utilization.
 7. **`ToolRegistry` + `@tool` decorator.** Reads pydantic signatures, builds JSON schemas. Native tools: `bash`, `read_file`, `write_file`, `http`.
 8. **`ToolRunner` Protocol + `SubprocessToolRunner`.** Per-tool timeout (30 s default), max-result-size cap (1 MB default), result truncation with notice.
@@ -159,14 +164,14 @@ A sequenced punch list derived from the decisions in `architecture.md`. Roughly 
 10. **`mcp_bridge` module.** Speaks MCP stdio + HTTP-stream transports; registers MCP-server tools into the existing `ToolRegistry`. MCP servers configured in `config.toml`.
 11. **Agent loop (`run_turn`).** Streaming events; tool-call execution via `ToolRunner`; SHA256 loop detection (5 identical `(tool, args_hash)` in last 10 turns); tool-aware compaction (drops assistant prose before tool results); max-turn budget of 10.
 12. **Hooks layer.** `before_tool`, `after_llm`, `on_turn_complete`, `on_tool_result`. Fail-open: emission via `asyncio.create_task` with swallowed exceptions.
-13. **Observability sinks.** `sqlite_sink` (always-on append-only), `langfuse_sink` (Docker container, fail-open exporter).
+13. **Observability sinks.** `sqlite_sink` (always-on append-only) plus a pluggable trace sink (fail-open exporter): `phoenix_sink` by default, `langfuse_sink` as an opt-in alternative. Selected via `config.toml` (`[observability] backend = "phoenix" | "langfuse" | "none"`); the Hooks seam stays identical so the choice is a one-line swap.
 14. **`Channel` Protocol + `CLIChannel` (TUI) + `WebSocketChannel`.** Both connect to the same FastAPI WebSocket endpoint.
 15. **`Gateway`.** In-memory `asyncio.Queue` (swap to SQLite-backed queue when adding the second channel). Session router. Hook-registration API (reserved seam; populated as needed).
 16. **`TriggerSource` Protocol + `HeartbeatTrigger`.** `asyncio.sleep(60)` loop; reads `HEARTBEAT.md` + `cron.json`; emits synthetic `InboundMessage` only when something is due. No LLM cost when nothing pending.
 17. **FastAPI server (`pishkar.server`).** Single entrypoint: `python -m pishkar.server`. WebSocket endpoint streaming the typed event protocol.
 18. **Web UI.** Minimal React: `Chat.tsx`, `ToolCall.tsx`, `Thinking.tsx`, `ApprovalDialog.tsx`. WebSocket client; types generated from pydantic models.
 19. **Tests.** `tests/unit/` for the deterministic components, `tests/integration/` with `MockLiteLLMProvider`. CI on every commit.
-20. **LangFuse self-hosted.** `deploy/docker-compose.yml` brings up LangFuse on the same host. Exporter wired through Hooks.
+20. **Trace backend (Docker).** `deploy/docker-compose.phoenix.yml` brings up Arize Phoenix as a single container with a mounted SQLite volume for persistence (the day-one default; ~300 MB resident, fits comfortably on a Pi 5 8 GB alongside the butler). `deploy/docker-compose.langfuse.yml` is provided for VPS deployments that want LangFuse's richer prompt-management and cost dashboards — pin to `langfuse/langfuse:2` (Postgres-only, ~1.5–2 GB) to avoid the v3 ClickHouse footprint. Exporter wired through Hooks in both cases.
 21. **Starter workspace.** Ship a default `~/.pishkar/users/ali/SOUL.md` with a Pishkar persona description and an empty `USER.md`.
 22. **Resilience hardening** (augments items 4, 8, 11, 14, 15, 16). Five constructs that make the runtime crash-tolerant; each is cheap because the schema is already laid out by earlier items.
     a. **SQLite-backed queue** — extends item 15. The `messages` table carries a `delivered_at` column; the Gateway scans for rows where `delivered_at IS NULL` on startup and resumes processing in order. Replaces the in-memory `asyncio.Queue` of the original day-one shape.
@@ -204,7 +209,7 @@ Each item below is a future addition that requires no rearchitecting because the
 * **Multi-agent routing.** One agent is sufficient until it is not.
 * **RL / skill self-improvement on day one.** Hand-written skills cover the high-frequency cases first.
 * **A dashboard / settings UI.** The workspace is the settings UI; editing `SOUL.md` in any text editor outperforms building a settings form.
-* **OpenTelemetry on day one.** LangFuse self-hosted is the observability backend; OTel can be added later as a second sink without changing the Hook emission path.
+* **OpenTelemetry on day one.** Phoenix (default) already speaks OTel under the hood, and a dedicated OTel sink can be added later as a third option without changing the Hook emission path.
 
 ## Safety minima
 
@@ -264,6 +269,6 @@ A handful of small but architecturally load-bearing details that are inexpensive
 
 **Event-schema drift between Python and TypeScript is a silent failure mode.** Set up Pydantic → TypeScript codegen on day one (via `datamodel-code-generator` or `pydantic2ts`). Without codegen, a `tool_result` field mismatch ships at some point and consumes half a day to track down.
 
-**LangFuse exporter is fail-open.** If the exporter blocks the agent loop, a slow LangFuse container freezes the butler. Wrap emission in `asyncio.create_task` with a swallowed-exception handler. Cheap now; painful when the exporter slows down and the loop hangs waiting for it.
+**Trace exporter is fail-open.** Whichever backend is selected (Phoenix, LangFuse, or none), if the exporter blocks the agent loop a slow container freezes the butler. Wrap emission in `asyncio.create_task` with a swallowed-exception handler. Cheap now; painful when the exporter slows down and the loop hangs waiting for it.
 
 **One stable entrypoint command.** `python -m pishkar.server` is the entrypoint, whether run by a developer in a terminal or by `launchd` / `systemd` later. The OS-native daemon installation is a thin wrapper that invokes the same command — no second entrypoint.
