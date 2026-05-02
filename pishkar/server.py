@@ -45,6 +45,8 @@ from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway, Handler
 from pishkar.gateway.hooks import HookManager
 from pishkar.gateway.user_registry import UserChannelRegistry
+from pishkar.observability.langfuse_sink import LangFuseSink
+from pishkar.observability.phoenix_sink import PhoenixSink
 from pishkar.observability.sqlite_sink import SqliteSink
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
@@ -334,6 +336,8 @@ def main() -> None:
     has_key = any(os.environ.get(k) for k, _, _ in PROVIDER_KEYS)
     interrupted: set[str] = set()
     approval_router = ApprovalRouter()
+    hooks = HookManager()
+    _attach_trace_sink(hooks)
     if has_key:
         from pishkar.runtime import build_default_provider, build_handler
         from pishkar.workspace.loader import WorkspaceLoader
@@ -355,6 +359,7 @@ def main() -> None:
     app = create_app(
         store=store,
         handler=handler,
+        hooks=hooks,
         recovery_target=interrupted,
         approval_router=approval_router,
         channel_runner_factory=_telegram_factory_from_env(
@@ -363,6 +368,70 @@ def main() -> None:
         ),
     )
     uvicorn.run(app, host="127.0.0.1", port=8765)
+
+
+def _attach_trace_sink(hooks: HookManager) -> None:
+    """Wire the configured LLM-trace backend into the Hooks layer.
+
+    `PISHKAR_TRACE_BACKEND` selects between `phoenix` (default; Pi 5 /
+    SBC friendly), `langfuse` (richer dashboards; needs more RAM), and
+    `none`. SDK imports happen lazily inside the build factories, so a
+    missing optional dep just disables tracing instead of crashing the
+    server.
+    """
+    import os
+
+    backend = os.environ.get("PISHKAR_TRACE_BACKEND", "phoenix").lower()
+    if backend == "none":
+        return
+    if backend == "phoenix":
+        try:
+            from pishkar.observability.phoenix_sink import build_phoenix_tracer
+
+            tracer = build_phoenix_tracer(
+                endpoint=os.environ.get(
+                    "PHOENIX_ENDPOINT", "http://localhost:6006/v1/traces"
+                ),
+                project_name=os.environ.get("PHOENIX_PROJECT", "pishkar"),
+            )
+        except ImportError:
+            logger.warning(
+                "PISHKAR_TRACE_BACKEND=phoenix but `arize-phoenix-otel` is not "
+                "installed; LLM tracing disabled."
+            )
+            return
+        PhoenixSink(tracer).attach(hooks)
+        return
+    if backend == "langfuse":
+        public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+        secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+        if not public_key or not secret_key:
+            logger.warning(
+                "PISHKAR_TRACE_BACKEND=langfuse but LANGFUSE_PUBLIC_KEY / "
+                "LANGFUSE_SECRET_KEY are not set; LLM tracing disabled."
+            )
+            return
+        try:
+            from pishkar.observability.langfuse_sink import build_langfuse_client
+
+            client = build_langfuse_client(
+                public_key=public_key,
+                secret_key=secret_key,
+                host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000"),
+            )
+        except ImportError:
+            logger.warning(
+                "PISHKAR_TRACE_BACKEND=langfuse but `langfuse` is not "
+                "installed; LLM tracing disabled."
+            )
+            return
+        LangFuseSink(client).attach(hooks)
+        return
+    logger.warning(
+        "Unknown PISHKAR_TRACE_BACKEND=%r (expected 'phoenix', 'langfuse', "
+        "or 'none'); LLM tracing disabled.",
+        backend,
+    )
 
 
 def _telegram_factory_from_env(*, user_id: str, store: SessionStore | None = None):
