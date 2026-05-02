@@ -348,6 +348,7 @@ def main() -> None:
         handler = build_handler(
             provider=provider,
             model=model,
+            hooks=hooks,
             workspace_loader=loader,
             interrupted_sessions=interrupted,
             approval_router=approval_router,
