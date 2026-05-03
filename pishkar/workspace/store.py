@@ -106,6 +106,14 @@ CREATE TABLE IF NOT EXISTS token_spend (
 CREATE INDEX IF NOT EXISTS idx_token_spend_user_time
     ON token_spend(user_id, created_at);
 
+CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id    TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS events (
     seq          INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id     TEXT NOT NULL UNIQUE,
@@ -463,6 +471,45 @@ class SessionStore:
         ) as cur:
             row = await cur.fetchone()
         return (int(row[0]), int(row[1])) if row else (0, 0)
+
+    async def tokens_spent_by_model_since(
+        self, user_id: str, since_iso: str
+    ) -> list[tuple[str, int, int]]:
+        """Return [(model, input_tokens, output_tokens), …] grouped by model
+        for the given user since `since_iso`. Used by `/usage` to render a
+        per-model breakdown."""
+        async with self.db.execute(
+            """SELECT model,
+                      COALESCE(SUM(input_tokens), 0),
+                      COALESCE(SUM(output_tokens), 0)
+               FROM token_spend
+               WHERE user_id = ? AND created_at >= ?
+               GROUP BY model
+               ORDER BY SUM(input_tokens + output_tokens) DESC""",
+            (user_id, since_iso),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [(str(r[0]), int(r[1]), int(r[2])) for r in rows]
+
+    # --- User preferences (key/value per user) ----------------------------
+
+    async def get_pref(self, user_id: str, key: str) -> str | None:
+        async with self.db.execute(
+            "SELECT value FROM user_prefs WHERE user_id = ? AND key = ?",
+            (user_id, key),
+        ) as cur:
+            row = await cur.fetchone()
+        return str(row[0]) if row else None
+
+    async def set_pref(self, user_id: str, key: str, value: str) -> None:
+        await self.db.execute(
+            """INSERT INTO user_prefs(user_id, key, value, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, key) DO UPDATE
+                 SET value = excluded.value, updated_at = excluded.updated_at""",
+            (user_id, key, value, _now_iso()),
+        )
+        await self.db.commit()
 
     # --- Event audit log (also: WebSocket reconnect replay) ----------------
 

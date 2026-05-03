@@ -433,3 +433,73 @@ async def test_on_model_arg_form_validates_against_provider(
     ctx.args = ["groq/llama-3.3-70b-versatile"]
     await runner._on_model(update, ctx)
     assert selector.current() == "groq/llama-3.3-70b-versatile"
+
+
+# --- /usage and model persistence ----------------------------------------
+
+
+async def test_callback_pick_model_persists_to_store(
+    gateway: Gateway, tmp_path
+) -> None:
+    selector = _selector(default="claude-sonnet-4-6")
+    store = SessionStore(tmp_path / "u.db")
+    await store.open()
+    try:
+        runner = TelegramBotRunner(
+            token="x",
+            owner_id=100,
+            user_id="ali",
+            gateway=gateway,
+            approval_router=ApprovalRouter(),
+            store=store,
+            model_selector=selector,
+        )
+        runner._app = MagicMock()  # type: ignore[attr-defined]
+        runner._app.bot.send_message = AsyncMock()
+
+        update = MagicMock()
+        update.effective_user.id = 100
+        update.callback_query.data = "pick_model:claude-opus-4-7"
+        update.callback_query.message.chat_id = 1
+        update.callback_query.message.text = "Pick a model"
+        update.callback_query.answer = AsyncMock()
+        update.callback_query.edit_message_text = AsyncMock()
+        update.callback_query.edit_message_reply_markup = AsyncMock()
+        await runner._on_callback(update, MagicMock())
+
+        assert await store.get_pref("ali", "model") == "claude-opus-4-7"
+    finally:
+        await store.close()
+
+
+async def test_on_usage_renders_today_week_alltime(
+    gateway: Gateway, tmp_path
+) -> None:
+    store = SessionStore(tmp_path / "u.db")
+    await store.open()
+    try:
+        await store.record_token_spend("ali", "groq/scout", 300, 150)
+        await store.record_token_spend("ali", "claude-opus", 10, 5)
+
+        runner = TelegramBotRunner(
+            token="x",
+            owner_id=100,
+            user_id="ali",
+            gateway=gateway,
+            approval_router=ApprovalRouter(),
+            store=store,
+        )
+        runner._app = MagicMock()  # type: ignore[attr-defined]
+        runner._app.bot.send_message = AsyncMock()
+
+        update = MagicMock()
+        update.effective_user.id = 100
+        update.message.reply_text = AsyncMock()
+        await runner._on_usage(update, MagicMock())
+
+        text = update.message.reply_text.await_args.args[0]
+        assert "Today" in text and "Last 7 days" in text and "All time" in text
+        assert "groq/scout" in text
+        assert "claude-opus" in text
+    finally:
+        await store.close()

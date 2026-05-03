@@ -161,6 +161,25 @@ def _chunk_text(text: str, size: int) -> list[str]:
     return [text[i : i + size] for i in range(0, len(text), size)] or [text]
 
 
+def _format_usage_section(
+    label: str, rows: list[tuple[str, int, int]]
+) -> str:
+    head = f"<b>{html.escape(label)}</b>"
+    if not rows:
+        return f"{head}\n<i>nothing yet</i>"
+    lines = [head]
+    total_in = total_out = 0
+    for model, in_tok, out_tok in rows:
+        total_in += in_tok
+        total_out += out_tok
+        lines.append(
+            f"• <code>{html.escape(model)}</code> — "
+            f"{in_tok:,} in / {out_tok:,} out"
+        )
+    lines.append(f"<b>Total:</b> {total_in:,} in / {total_out:,} out")
+    return "\n".join(lines)
+
+
 def _approval_message(tool_name: str, args: dict[str, Any]) -> str:
     """Render an approval prompt with a tool-specific headline so the
     user sees *what* is being asked, not just the tool name."""
@@ -246,6 +265,7 @@ class TelegramBotRunner:
         app.add_handler(CommandHandler("switch", self._on_switch))
         app.add_handler(CommandHandler("provider", self._on_provider))
         app.add_handler(CommandHandler("model", self._on_model))
+        app.add_handler(CommandHandler("usage", self._on_usage))
         app.add_handler(CallbackQueryHandler(self._on_callback))
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
@@ -308,6 +328,7 @@ class TelegramBotRunner:
             "/switch <id-prefix> — switch to a specific session\n"
             "/provider — choose LLM provider (Anthropic / Groq / …)\n"
             "/model — choose model within the selected provider\n"
+            "/usage — show token spend (today / 7d / all)\n"
             "/help — this message"
         )
 
@@ -494,6 +515,7 @@ class TelegramBotRunner:
         if ctx.args:
             target = ctx.args[0]
             if target in models and self._model_selector.set_model(target):
+                await self._persist_model(target)
                 await update.message.reply_text(
                     f"Model set to <code>{html.escape(target)}</code>.",
                     parse_mode="HTML",
@@ -552,6 +574,8 @@ class TelegramBotRunner:
             if self._model_selector is None:
                 return
             ok = self._model_selector.set_model(payload)
+            if ok:
+                await self._persist_model(payload)
             with contextlib.suppress(Exception):
                 await query.edit_message_reply_markup(reply_markup=None)
                 if ok:
@@ -581,6 +605,42 @@ class TelegramBotRunner:
             await query.edit_message_text(
                 text=f"{message.text}\n\n→ {label}"
             )
+
+    async def _persist_model(self, model: str) -> None:
+        if self._store is None:
+            return
+        with contextlib.suppress(Exception):
+            await self._store.set_pref(self._user_id, "model", model)
+
+    async def _on_usage(
+        self, update: Update, _: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update) or update.message is None:
+            return
+        if self._store is None:
+            await update.message.reply_text("Token-spend store unavailable.")
+            return
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        since_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        since_week = now - timedelta(days=7)
+        epoch = datetime.fromtimestamp(0, tz=UTC)
+
+        sections: list[str] = []
+        for label, since in [
+            ("Today", since_today),
+            ("Last 7 days", since_week),
+            ("All time", epoch),
+        ]:
+            rows = await self._store.tokens_spent_by_model_since(
+                self._user_id, since.isoformat()
+            )
+            sections.append(_format_usage_section(label, rows))
+
+        await update.message.reply_text(
+            "\n\n".join(sections), parse_mode="HTML"
+        )
 
     # ---- session lifecycle ----------------------------------------------
 

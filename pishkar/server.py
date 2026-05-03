@@ -78,6 +78,8 @@ def create_app(
     channel_runner_factory: ChannelRunnerFactory | None = None,
     user_registry: UserChannelRegistry | None = None,
     tool_registry: Any = None,
+    model_selector: Any = None,
+    user_id: str | None = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -102,6 +104,14 @@ def create_app(
 
             report = await recover_on_startup(store)
             recovery_target.update(report["interrupted_sessions"])
+        if model_selector is not None and user_id:
+            saved = await store.get_pref(user_id, "model")
+            if saved and not model_selector.set_model(saved):
+                logger.info(
+                    "saved model %r is no longer in the catalog; "
+                    "keeping default %r",
+                    saved, model_selector.default(),
+                )
         if tool_registry is not None:
             from pishkar.tools.mcp_config import connect_servers, load_config
 
@@ -386,6 +396,7 @@ def main() -> None:
     else:
         handler = _default_handler  # echo stub keeps the server bootable offline
 
+    user_id = os.environ.get("PISHKAR_USER", "user")
     app = create_app(
         store=store,
         handler=handler,
@@ -393,8 +404,10 @@ def main() -> None:
         recovery_target=interrupted,
         approval_router=approval_router,
         tool_registry=tool_registry,
+        model_selector=model_selector,
+        user_id=user_id,
         channel_runner_factory=_telegram_factory_from_env(
-            user_id=os.environ.get("PISHKAR_USER", "user"),
+            user_id=user_id,
             store=store,
             model_selector=model_selector,
         ),
