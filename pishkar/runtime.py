@@ -26,15 +26,19 @@ from pishkar.tools.approval_gate import ApprovalGate
 from pishkar.tools.bash import bash
 from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
+from pishkar.tools.read_url import read_url
 from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
+from pishkar.tools.search import search
 from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
 from pishkar.workspace.store import SessionStore
 
 # Tools that need user approval before each call. Read-only operations
 # stay off this list; sensitive ones (state-mutating, network, shell)
 # are gated.
-DEFAULT_GATED_TOOLS: frozenset[str] = frozenset({"write_file", "http", "bash"})
+DEFAULT_GATED_TOOLS: frozenset[str] = frozenset(
+    {"write_file", "http", "bash", "read_url", "search"}
+)
 
 # Default cap on tool-result bytes fed back into the LLM context. Sized to
 # stay comfortably under typical free-tier TPM limits (e.g. Groq Scout at
@@ -208,7 +212,7 @@ def _tool_max_bytes_from_env() -> int:
 
 def _default_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register_many(read_file, write_file, http, bash)
+    reg.register_many(read_file, write_file, http, bash, read_url, search)
     return reg
 
 
