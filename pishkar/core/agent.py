@@ -17,7 +17,11 @@ from typing import Any
 from uuid import uuid4
 
 from pishkar.core.compaction import compact
-from pishkar.core.context import current_session_id, current_turn_id
+from pishkar.core.context import (
+    current_session_id,
+    current_turn_id,
+    current_user_id,
+)
 from pishkar.core.events import (
     ContentBlockDelta,
     ContentBlockStart,
@@ -109,6 +113,7 @@ async def run_turn(
     session_id = user_message.session_id
     current_turn_id.set(turn_id)
     current_session_id.set(session_id)
+    current_user_id.set(user_message.user_id)
     history.append({"role": "user", "content": user_message.content})
 
     yield TurnStart(turn_id=turn_id, session_id=session_id, turn_index=0)

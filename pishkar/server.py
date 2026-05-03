@@ -479,6 +479,8 @@ def _attach_reflector(
     Off by default (extraction is an extra LLM call per N turns). Set
     `PISHKAR_REFLECTOR_ENABLED=1` to opt in. `PISHKAR_REFLECTOR_EVERY_N`
     overrides the default trigger cadence (10 successful turns)."""
+    import os
+
     if os.environ.get("PISHKAR_REFLECTOR_ENABLED", "").lower() not in {
         "1", "true", "yes", "on",
     }:

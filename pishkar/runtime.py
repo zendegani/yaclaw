@@ -26,6 +26,7 @@ from pishkar.tools.approval_gate import ApprovalGate
 from pishkar.tools.bash import bash
 from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
+from pishkar.tools.plan import plan
 from pishkar.tools.read_url import read_url
 from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
@@ -47,7 +48,12 @@ DEFAULT_TOOL_MAX_BYTES = 16_000
 
 DEFAULT_SYSTEM = (
     "You are Pishkar, a personal AI butler. Be concise and direct. "
-    "Use tools when they help; otherwise just answer."
+    "Use tools when they help; otherwise just answer.\n\n"
+    "For tasks needing more than ~2 tool calls (research + summarize, "
+    "multi-file edits, anything you'd want to check off), call the "
+    "`plan` tool first with a brief markdown checklist. Revise the plan "
+    "as you learn things. It is saved per-session and visible across "
+    "turns so you don't lose track."
 )
 
 
@@ -215,7 +221,9 @@ def _tool_max_bytes_from_env() -> int:
 
 def _default_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register_many(read_file, write_file, http, bash, read_url, search)
+    reg.register_many(
+        read_file, write_file, http, bash, read_url, search, plan,
+    )
     return reg
 
 

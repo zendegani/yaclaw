@@ -9,6 +9,12 @@ from contextvars import ContextVar
 
 current_turn_id: ContextVar[str] = ContextVar("current_turn_id", default="")
 current_session_id: ContextVar[str] = ContextVar("current_session_id", default="")
+current_user_id: ContextVar[str] = ContextVar("current_user_id", default="")
 current_channel: ContextVar[str] = ContextVar("current_channel", default="")
 
-__all__ = ["current_channel", "current_session_id", "current_turn_id"]
+__all__ = [
+    "current_channel",
+    "current_session_id",
+    "current_turn_id",
+    "current_user_id",
+]
