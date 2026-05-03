@@ -90,16 +90,36 @@ class PhoenixSink:
         if system:
             full_input = [{"role": "system", "content": system}, *full_input]
         if full_input:
-            span.set_attribute("input.value", json.dumps(full_input))
+            span.set_attribute("input.value", json.dumps(full_input, default=str))
             span.set_attribute("input.mime_type", "application/json")
             for i, msg in enumerate(full_input):
                 prefix = f"llm.input_messages.{i}.message"
-                span.set_attribute(f"{prefix}.role", str(msg.get("role", "")))
+                role = str(msg.get("role", ""))
+                span.set_attribute(f"{prefix}.role", role)
                 content = msg.get("content")
                 if isinstance(content, str):
                     span.set_attribute(f"{prefix}.content", content)
                 elif content is not None:
                     span.set_attribute(f"{prefix}.content", json.dumps(content))
+                if role == "tool":
+                    tcid = msg.get("tool_call_id")
+                    if tcid is not None:
+                        span.set_attribute(f"{prefix}.tool_call_id", str(tcid))
+                tcs = msg.get("tool_calls")
+                if isinstance(tcs, list):
+                    for j, tc in enumerate(tcs):
+                        fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                        tc_prefix = f"{prefix}.tool_calls.{j}.tool_call"
+                        span.set_attribute(
+                            f"{tc_prefix}.id", str(tc.get("id", "")) if isinstance(tc, dict) else ""
+                        )
+                        span.set_attribute(
+                            f"{tc_prefix}.function.name", str(fn.get("name", ""))
+                        )
+                        span.set_attribute(
+                            f"{tc_prefix}.function.arguments",
+                            str(fn.get("arguments", "")),
+                        )
 
         if assistant_text or tool_calls:
             prefix = "llm.output_messages.0.message"
