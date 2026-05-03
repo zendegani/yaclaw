@@ -187,6 +187,19 @@ def _approval_detail(tool_name: str, args: dict[str, Any]) -> str:
         if isinstance(url, str):
             method_str = method.upper() if isinstance(method, str) else "GET"
             return f"<code>{html.escape(method_str)} {html.escape(url)}</code>"
+    elif tool_name == "search":
+        query = args.get("query", "")
+        engine = args.get("engine", "auto")
+        if isinstance(query, str):
+            engine_str = engine if isinstance(engine, str) else "auto"
+            return (
+                f"<code>{html.escape(engine_str)}</code>: "
+                f"{html.escape(query[:500])}"
+            )
+    elif tool_name == "read_url":
+        url = args.get("url")
+        if isinstance(url, str):
+            return f"<code>{html.escape(url)}</code>"
     return ""
 
 
