@@ -1,115 +1,127 @@
 # Pishkar
 
-A personal AI butler. Runs locally, talks to you over a web UI or Telegram, and writes its memory to plain markdown files in `~/.pishkar/`.
+![Status Alpha](https://img.shields.io/badge/Status-Alpha-FF8C00) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white) ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white) ![npm 11.12+](https://img.shields.io/badge/npm-11.12%2B-CB3837?logo=npm&logoColor=white) ![TypeScript 5.6](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)
 
-## Requirements
+**Pishkar** is a personal AI butler that runs locally and talks to you through a modern Web UI or Telegram. It maintains a persistent memory of your interactions by writing to plain markdown files locally, ensuring your data is always under your control.
 
-- Python 3.14 (`uv python install 3.14` if you don't have it)
-- [`uv`](https://docs.astral.sh/uv/) for Python deps
-- Node 20+ and `npm` — only if you want the web UI
-- An API key for at least one LLM provider (Anthropic, OpenAI, Gemini, OpenRouter, Groq, Moonshot/Kimi, or Qwen via DashScope)
+---
 
-## Setup
+## 🚀 Features
+
+- **Local-First Memory**: Data and sessions are written to human-readable markdown (`~/.pishkar/`) and local SQLite databases.
+- **Agentic Tool Use & Safety**: Can execute bash, read/write files, and make HTTP requests—guarded by a built-in **Approval Gate** (Ask Me / Allow Once / Allow All) to ensure you stay in control.
+- **MCP Extensibility**: Fully wired with the Model Context Protocol (MCP) to seamlessly connect to external tools and services. 
+- **Crash-Resilient**: Powered by an SQLite-backed queue with mid-turn crash detection. If your machine reboots, Pishkar resumes exactly where it left off.
+- **Cost & Context Aware**: Includes daily token budget enforcement, auto-concise mode, and SHA-256 loop detection to prevent runaway LLM costs.
+- **Background Tasks**: Can wake up on a cron schedule (`HEARTBEAT.md`) to do background work without wasting LLM tokens while idle.
+- **Full Observability**: OpenTelemetry tracing built-in (via Arize Phoenix or Langfuse) so you can see exactly what the LLM is thinking and doing under the hood.
+- **Multi-Interface**: Chat via a beautiful Web UI or on the go via Telegram.
+- **Multi-Provider LLM**: Supports Anthropic, OpenAI, Gemini, OpenRouter, Groq, Moonshot, and Qwen.
+- **Lightweight**: Easily runs on a Raspberry Pi 5.
+
+## 🛠️ Requirements
+
+- **Python 3.14+** (Install via `uv python install 3.14` if missing)
+- [**uv**](https://docs.astral.sh/uv/) (Fast Python package installer)
+- **Node.js 20+** & **npm 11.12+** (Only required if running the Web UI)
+- **API Key** for your preferred LLM provider.
+
+## 📦 Setup & Installation
+
+### 1. Backend Server
+
+Clone the repository and set up your environment:
 
 ```bash
 git clone <this repo>
 cd yaclaw
 uv sync
 cp .env.example .env
-$EDITOR .env   # paste at least one provider key
 ```
 
-That's it for the backend.
+Open `.env` in your favorite editor and paste your LLM provider API key(s).
 
-## Run
+Start the server:
 
 ```bash
 uv run python -m pishkar.server
 ```
 
-Server listens on `127.0.0.1:8765`. By default it picks a model based on which key is set; pin one with `PISHKAR_MODEL=groq/meta-llama/llama-4-scout-17b-16e-instruct` (or any LiteLLM model id).
+*The server listens on `127.0.0.1:8765`. By default, it auto-detects the model based on your configured API keys. To pin a specific model, set `PISHKAR_MODEL=groq/meta-llama/llama-4-scout-17b-16e-instruct` (or any valid LiteLLM ID).*
 
-### Web UI
+### 2. Web UI
+
+In a new terminal tab, navigate to the UI directory and start the dev server:
 
 ```bash
-cd ui && npm install && npm run dev
+cd ui
+npm install
+npm run dev
 ```
 
-Open <http://localhost:5173>.
+Open **[http://localhost:5173](http://localhost:5173)** in your browser to start chatting.
 
-### Telegram
+### 3. Telegram Integration
 
-1. Message [@BotFather](https://t.me/BotFather), `/newbot`, copy the token.
-2. Message [@userinfobot](https://t.me/userinfobot), copy your numeric ID.
-3. Add to `.env`:
+Prefer chatting on Telegram? Set up a private bot:
 
+1. Message [@BotFather](https://t.me/BotFather), create a `/newbot`, and copy the token.
+2. Message [@userinfobot](https://t.me/userinfobot) and copy your numeric User ID.
+3. Add the credentials to your `.env` file:
+
+   ```env
+   TELEGRAM_BOT_TOKEN=your_bot_token_here
+   TELEGRAM_OWNER_ID=your_numeric_user_id
    ```
-   TELEGRAM_BOT_TOKEN=...
-   TELEGRAM_OWNER_ID=...
-   ```
 
-4. Restart the server. Only your own user ID can talk to the bot; everyone else is silently ignored. `/new` in chat starts a fresh session.
+4. Restart the `pishkar.server`.
+*Security Note: Only your specific `TELEGRAM_OWNER_ID` can interact with the bot. All other users are silently ignored. Type `/new` in the chat to start a fresh session.*
 
-## Run on a Raspberry Pi 5
+---
 
-Same steps. Tested with 64-bit Raspberry Pi OS:
+## 🍓 Running on a Raspberry Pi 5
+
+Pishkar is designed to be lightweight enough for a Pi 5 running 64-bit Raspberry Pi OS.
 
 ```bash
+# 1. Install system prerequisites
 sudo apt update && sudo apt install -y git curl
+
+# 2. Install uv and Python 3.14
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv python install 3.14
-git clone <this repo> && cd yaclaw
+
+# 3. Setup Pishkar
+git clone https://github.com/zendegani/yaclaw.git && cd yaclaw
 uv sync
 cp .env.example .env && $EDITOR .env
+
+# 4. Run
 uv run python -m pishkar.server
 ```
 
-To keep it running after logout, wrap it in a systemd unit pointing at `uv run --directory /path/to/yaclaw python -m pishkar.server`. The Pi only needs to reach the LLM provider's API and Telegram; no inbound ports.
+**Tips for Pi Deployment:**
 
-To access the Web UI from your laptop, you can forward the ports over SSH:
-`ssh -L 5173:localhost:5173 -L 8765:localhost:8765 user@server-address`
-Then open <http://localhost:5173> on your laptop.
+- **Background Service**: Wrap the run command in a systemd unit (`uv run --directory /path/to/yaclaw python -m pishkar.server`) to keep it running after you log out.
+- **Remote Access**: Access the Web UI from your laptop securely using SSH port forwarding:
 
-## Where your data lives
-
-- `~/.pishkar/sessions.db` — SQLite log (messages, turns, tool calls, events)
-- `~/.pishkar/users/<user_id>/{SOUL,USER,AGENTS,HEARTBEAT}.md` — workspace markdown the agent reads and edits
-
-Both are local. Delete to start over.
+  ```bash
+  ssh -L 5173:localhost:5173 -L 8765:localhost:8765 user@your-pi-address
+  ```
 
 ---
 
-Quick clarification first: the dialog **already** renders the args as a JSON block under the title (`ApprovalDialog.tsx:29-33`, scrollable, `max-h-64`). So for `bash("ls")` you should be seeing:
+## 📁 Where Your Data Lives
 
-```
-{
-  "cmd": "ls"
-}
-```
+You own your data. Everything is stored locally on your machine:
 
-If you're not seeing it at all, that's a bug worth checking (browser zoom, dialog truncation). If you *are* seeing it but find it noisy — agreed, JSON-quoting a shell command is awkward.
+- 🗄️ **`~/.pishkar/sessions.db`**: An SQLite log of all messages, dialogue turns, tool calls, and events.
+- 📝 **`~/.pishkar/users/<user_id>/`**: Contains markdown files (`SOUL.md`, `USER.md`, `AGENTS.md`, `HEARTBEAT.md`) that act as the agent's living workspace. The agent actively reads and edits these.
 
-My take on what to change:
-
-- **Add a per-tool headline** above the JSON, surfacing the one field that matters:
-  - `bash` → render `args.cmd` as a `<pre>` shell block (no JSON quoting).
-  - `write_file` → headline `path` + `(N chars)`; the JSON pre block already handles the scroll for long content.
-  - `http` → headline `METHOD url`.
-- **Keep the full JSON** below as-is for the long-tail / unknown tools. It's the safety net.
-- The existing `max-h-64 overflow-auto` already prevents long writes from blowing up the dialog — it just becomes a scrollable preview, which is fine.
-
-The "long text into a file" concern is real but not unique to approval — at some point you trust the path enough to not re-read every byte. Showing `path` + length + scrollable preview is the right tradeoff: glanceable headline, full content available if you want to scroll.
-
-Want me to implement the headline for `bash`/`write_file`/`http`? Small change, ~20 lines in `ApprovalDialog.tsx`.
+*Want to start completely fresh? Just delete the `~/.pishkar/` directory.*
 
 ---
 
-Type-check clean. Changes to `ui/src/components/ApprovalDialog.tsx`:
+## 📜 License
 
-- **`bash`** — shows `$ <cmd>` in a scrollable shell-style block (no JSON quoting).
-- **`write_file`** — shows `path: <path> (<N> chars)` so you see at a glance what's being written and how big.
-- **`http`** — shows `METHOD url`.
-- **Full arguments** — moved into a collapsed `<details>` so it's still there if you want it (paths can be wrong, content can be junk), but doesn't dominate the dialog. Click "Full arguments" to expand.
-- Unknown/future tools fall through to just the `<details>` block (still readable, no regression).
-
-Test plan: refresh the UI, ask Pishkar to `ls`. You should see `$ ls` in a tidy block, plus a "Full arguments" toggle.
+This project is open-source and licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
