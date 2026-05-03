@@ -54,6 +54,65 @@ async def test_after_llm_opens_span_with_identity_attributes() -> None:
     assert span.ended is False
 
 
+async def test_after_llm_records_chat_messages_and_assistant_text() -> None:
+    tracer = FakeTracer()
+    hm = HookManager()
+    PhoenixSink(tracer).attach(hm)
+
+    hm.emit(
+        AFTER_LLM,
+        turn_id="t1", session_id="s1", user_id="ali",
+        model="claude-opus", stop_reason="end_turn",
+        input_tokens=10, output_tokens=5,
+        messages=[{"role": "user", "content": "hi there"}],
+        system="be concise",
+        assistant_text="hello!",
+        tool_calls=[],
+    )
+    await hm.drain()
+
+    [span] = tracer.spans
+    assert span.attributes["openinference.span.kind"] == "LLM"
+    assert span.attributes["llm.input_messages.0.message.role"] == "system"
+    assert span.attributes["llm.input_messages.0.message.content"] == "be concise"
+    assert span.attributes["llm.input_messages.1.message.role"] == "user"
+    assert span.attributes["llm.input_messages.1.message.content"] == "hi there"
+    assert span.attributes["llm.output_messages.0.message.role"] == "assistant"
+    assert span.attributes["llm.output_messages.0.message.content"] == "hello!"
+    assert span.attributes["output.value"] == "hello!"
+    assert "input.value" in span.attributes
+
+
+async def test_after_llm_records_tool_calls_on_output_message() -> None:
+    tracer = FakeTracer()
+    hm = HookManager()
+    PhoenixSink(tracer).attach(hm)
+
+    hm.emit(
+        AFTER_LLM,
+        turn_id="t1", session_id="s1", user_id="ali",
+        model="m", stop_reason="tool_use",
+        input_tokens=1, output_tokens=1,
+        messages=[{"role": "user", "content": "do it"}],
+        assistant_text="",
+        tool_calls=[{"id": "call_1", "name": "search", "arguments": '{"q":"x"}'}],
+    )
+    await hm.drain()
+
+    [span] = tracer.spans
+    a = span.attributes
+    assert a["llm.output_messages.0.message.role"] == "assistant"
+    assert a["llm.output_messages.0.message.tool_calls.0.tool_call.id"] == "call_1"
+    assert (
+        a["llm.output_messages.0.message.tool_calls.0.tool_call.function.name"]
+        == "search"
+    )
+    assert (
+        a["llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"]
+        == '{"q":"x"}'
+    )
+
+
 async def test_two_after_llm_calls_share_span_and_sum_tokens() -> None:
     tracer = FakeTracer()
     hm = HookManager()

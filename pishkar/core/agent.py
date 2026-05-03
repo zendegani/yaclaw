@@ -220,6 +220,16 @@ async def run_turn(
         )
         yield MessageStop(turn_id=turn_id, session_id=session_id)
 
+        assistant_text = "".join(text_buf)
+        tool_call_summaries = [
+            {
+                "id": b.id or f"call_{i}",
+                "name": b.name,
+                "arguments": b.args_json or "{}",
+            }
+            for i, b in sorted(builders.items())
+        ]
+
         if hooks is not None:
             hooks.emit(
                 AFTER_LLM,
@@ -230,22 +240,26 @@ async def run_turn(
                 stop_reason=normalized,
                 input_tokens=usage_in,
                 output_tokens=usage_out,
+                messages=[dict(m) for m in history],
+                system=system,
+                assistant_text=assistant_text,
+                tool_calls=tool_call_summaries,
             )
 
         assistant_msg: dict[str, Any] = {"role": "assistant"}
         if text_buf:
-            assistant_msg["content"] = "".join(text_buf)
+            assistant_msg["content"] = assistant_text
         if builders:
             assistant_msg["tool_calls"] = [
                 {
-                    "id": b.id or f"call_{i}",
+                    "id": tc["id"],
                     "type": "function",
                     "function": {
-                        "name": b.name,
-                        "arguments": b.args_json or "{}",
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
                     },
                 }
-                for i, b in sorted(builders.items())
+                for tc in tool_call_summaries
             ]
         history.append(assistant_msg)
 

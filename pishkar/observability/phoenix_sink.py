@@ -1,15 +1,21 @@
 """Arize Phoenix sink — sends turn-level spans to a self-hosted Phoenix.
 
 Phoenix is OTel-native: a span per turn, opened on the first `after_llm`
-and ended on `on_turn_complete`, with token counts and stop reason set
-as span attributes. The `tracer` argument is duck-typed to OpenTelemetry's
-`Tracer` (`start_span(name, attributes=...) -> Span` where the span
-exposes `set_attribute(key, value)` and `end()`), so tests inject a fake.
+and ended on `on_turn_complete`, with token counts, stop reason, and the
+chat messages set as span attributes. Attributes follow the OpenInference
+semantic conventions (`openinference.span.kind`, `input.value`,
+`llm.input_messages.{i}.message.{role,content}`, `llm.output_messages.…`)
+so the Phoenix UI renders the conversation in its chat panel.
+
+The `tracer` argument is duck-typed to OpenTelemetry's `Tracer`
+(`start_span(name, attributes=...) -> Span` where the span exposes
+`set_attribute(key, value)` and `end()`), so tests inject a fake.
 
 All writes go through `HookManager.emit`, so failures and slowness inside
 the Phoenix exporter never block the agent loop.
 """
 
+import json
 from typing import Any, Protocol
 
 from pishkar.gateway.hooks import AFTER_LLM, ON_TURN_COMPLETE, HookManager
@@ -48,6 +54,10 @@ class PhoenixSink:
         stop_reason: str | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
+        messages: list[dict[str, Any]] | None = None,
+        system: str | None = None,
+        assistant_text: str = "",
+        tool_calls: list[dict[str, Any]] | None = None,
         **_: Any,
     ) -> None:
         span = self._spans.get(turn_id)
@@ -55,9 +65,11 @@ class PhoenixSink:
             span = self._tracer.start_span(
                 "pishkar.turn",
                 attributes={
+                    "openinference.span.kind": "LLM",
                     "turn.id": turn_id,
                     "session.id": session_id or "",
                     "user.id": user_id or "",
+                    "llm.model_name": model,
                     "llm.model": model,
                 },
             )
@@ -68,8 +80,44 @@ class PhoenixSink:
         totals["output"] += output_tokens
         span.set_attribute("llm.token_count.prompt", totals["input"])
         span.set_attribute("llm.token_count.completion", totals["output"])
+        span.set_attribute(
+            "llm.token_count.total", totals["input"] + totals["output"]
+        )
         if stop_reason is not None:
             span.set_attribute("llm.stop_reason", stop_reason)
+
+        full_input = list(messages or [])
+        if system:
+            full_input = [{"role": "system", "content": system}, *full_input]
+        if full_input:
+            span.set_attribute("input.value", json.dumps(full_input))
+            span.set_attribute("input.mime_type", "application/json")
+            for i, msg in enumerate(full_input):
+                prefix = f"llm.input_messages.{i}.message"
+                span.set_attribute(f"{prefix}.role", str(msg.get("role", "")))
+                content = msg.get("content")
+                if isinstance(content, str):
+                    span.set_attribute(f"{prefix}.content", content)
+                elif content is not None:
+                    span.set_attribute(f"{prefix}.content", json.dumps(content))
+
+        if assistant_text or tool_calls:
+            prefix = "llm.output_messages.0.message"
+            span.set_attribute(f"{prefix}.role", "assistant")
+            if assistant_text:
+                span.set_attribute(f"{prefix}.content", assistant_text)
+                span.set_attribute("output.value", assistant_text)
+                span.set_attribute("output.mime_type", "text/plain")
+            for i, tc in enumerate(tool_calls or []):
+                tc_prefix = f"{prefix}.tool_calls.{i}.tool_call"
+                span.set_attribute(f"{tc_prefix}.id", str(tc.get("id", "")))
+                span.set_attribute(
+                    f"{tc_prefix}.function.name", str(tc.get("name", ""))
+                )
+                span.set_attribute(
+                    f"{tc_prefix}.function.arguments",
+                    str(tc.get("arguments", "")),
+                )
 
     async def _on_turn_complete(
         self,
