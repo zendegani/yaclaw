@@ -69,7 +69,6 @@ def build_handler(
     registry = registry or _default_registry()
     histories: dict[str, list[dict[str, Any]]] = {}
     gates: dict[str, ApprovalGate] = {}
-    tool_schemas = registry.schemas("openai")
     interrupted = interrupted_sessions if interrupted_sessions is not None else set()
     tool_max_bytes = _tool_max_bytes_from_env()
 
@@ -156,7 +155,10 @@ def build_handler(
                 history=history,
                 provider=provider,
                 runner=turn_runner,
-                tool_schemas=tool_schemas,
+                # Read fresh per turn so tools registered after handler
+                # construction (e.g. MCP servers connected during lifespan
+                # startup) are visible to the LLM on the very next call.
+                tool_schemas=registry.schemas("openai"),
                 system=turn_system,
                 model=selector.current(),
                 hooks=hooks,

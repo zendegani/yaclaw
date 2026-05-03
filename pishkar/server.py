@@ -77,6 +77,7 @@ def create_app(
     approval_router: ApprovalRouter | None = None,
     channel_runner_factory: ChannelRunnerFactory | None = None,
     user_registry: UserChannelRegistry | None = None,
+    tool_registry: Any = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -91,6 +92,7 @@ def create_app(
         if channel_runner_factory is not None
         else []
     )
+    mcp_clients: list[Any] = []
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -100,6 +102,14 @@ def create_app(
 
             report = await recover_on_startup(store)
             recovery_target.update(report["interrupted_sessions"])
+        if tool_registry is not None:
+            from pishkar.tools.mcp_config import connect_servers, load_config
+
+            servers = load_config()
+            if servers:
+                mcp_clients.extend(
+                    await connect_servers(servers, tool_registry)
+                )
         await gateway.start()
         for runner in runners:
             await runner.start()
@@ -110,6 +120,11 @@ def create_app(
                 with contextlib.suppress(Exception):
                     await runner.stop()
             await gateway.stop()
+            if mcp_clients:
+                from pishkar.tools.mcp_config import disconnect_servers
+
+                with contextlib.suppress(Exception):
+                    await disconnect_servers(mcp_clients)
             await store.close()
 
     app = FastAPI(lifespan=lifespan)
@@ -339,9 +354,11 @@ def main() -> None:
     hooks = HookManager()
     _attach_trace_sink(hooks)
     model_selector = None
+    tool_registry = None
     if has_key:
         from pishkar.runtime import (
             ModelSelector,
+            _default_registry,
             build_default_provider,
             build_handler,
         )
@@ -351,9 +368,13 @@ def main() -> None:
         loader.ensure_starter(os.environ.get("PISHKAR_USER", "user"))
         provider, model = build_default_provider()
         model_selector = ModelSelector(default=model)
+        # Build the registry up front so MCP tools (connected during the
+        # lifespan startup) land in the same instance the handler reads.
+        tool_registry = _default_registry()
         handler = build_handler(
             provider=provider,
             model=model_selector,
+            registry=tool_registry,
             hooks=hooks,
             workspace_loader=loader,
             interrupted_sessions=interrupted,
@@ -371,6 +392,7 @@ def main() -> None:
         hooks=hooks,
         recovery_target=interrupted,
         approval_router=approval_router,
+        tool_registry=tool_registry,
         channel_runner_factory=_telegram_factory_from_env(
             user_id=os.environ.get("PISHKAR_USER", "user"),
             store=store,
