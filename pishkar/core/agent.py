@@ -31,10 +31,12 @@ from pishkar.core.events import (
     TextDelta,
     ThinkingBlock,
     ThinkingDelta,
-    ToolResult as ToolResultEvent,
     ToolUseBlock,
     TurnEnd,
     TurnStart,
+)
+from pishkar.core.events import (
+    ToolResult as ToolResultEvent,
 )
 from pishkar.core.loop_guard import LoopGuard
 from pishkar.core.messages import InboundMessage
@@ -267,7 +269,8 @@ async def run_turn(
             if hooks is not None:
                 hooks.emit(
                     ON_TURN_COMPLETE,
-                    turn_id=turn_id, session_id=session_id, stop_reason="end_turn",
+                    turn_id=turn_id, session_id=session_id,
+                    user_id=user_message.user_id, stop_reason="end_turn",
                 )
             yield TurnEnd(turn_id=turn_id, session_id=session_id, stop_reason="end_turn")
             return
@@ -280,6 +283,7 @@ async def run_turn(
                         hooks.emit(
                             ON_TURN_COMPLETE,
                             turn_id=turn_id, session_id=session_id,
+                            user_id=user_message.user_id,
                             stop_reason="loop_detected",
                         )
                     yield TurnEnd(
@@ -310,7 +314,8 @@ async def run_turn(
     if hooks is not None:
         hooks.emit(
             ON_TURN_COMPLETE,
-            turn_id=turn_id, session_id=session_id, stop_reason="max_turns",
+            turn_id=turn_id, session_id=session_id,
+            user_id=user_message.user_id, stop_reason="max_turns",
         )
     yield TurnEnd(turn_id=turn_id, session_id=session_id, stop_reason="max_turns")
 

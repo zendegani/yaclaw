@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from pishkar.workspace.loader import WorkspaceLoader
+from pishkar.workspace.loader import (
+    Skill,
+    Workspace,
+    WorkspaceLoader,
+    compose_system_prompt,
+)
 
 
 def test_load_empty_workspace_returns_blank_fields(tmp_path: Path) -> None:
@@ -65,3 +70,55 @@ def test_user_isolation(tmp_path: Path) -> None:
     loader.write("guest", "USER", "Guest's facts")
     assert loader.load("ali").user == "Ali's facts"
     assert loader.load("guest").user == "Guest's facts"
+
+
+def test_compose_injects_skills_into_system_prompt(tmp_path: Path) -> None:
+    ws = Workspace(
+        user_id="ali",
+        root=tmp_path,
+        soul="Be Pishkar.",
+        skills=[
+            Skill(
+                name="greet",
+                description="say hello",
+                body="Wave warmly.",
+                path=tmp_path / "skills" / "greet" / "SKILL.md",
+            ),
+            Skill(
+                name="cook",
+                description="",
+                body="Boil water.",
+                path=tmp_path / "skills" / "cook" / "SKILL.md",
+            ),
+        ],
+    )
+    out = compose_system_prompt(ws, base="base")
+    assert "# Skills" in out
+    assert "## greet — say hello" in out
+    assert "Wave warmly." in out
+    assert "## cook" in out
+    assert "Boil water." in out
+
+
+def test_compose_omits_skills_section_when_empty(tmp_path: Path) -> None:
+    ws = Workspace(user_id="ali", root=tmp_path, soul="Persona.")
+    out = compose_system_prompt(ws, base="base")
+    assert "# Skills" not in out
+
+
+def test_compose_injects_memory_when_present(tmp_path: Path) -> None:
+    ws = Workspace(
+        user_id="ali",
+        root=tmp_path,
+        memory="- User likes tea.\n- Allergic to nuts.\n",
+    )
+    out = compose_system_prompt(ws, base="base")
+    assert "# Remembered facts (MEMORY.md)" in out
+    assert "User likes tea." in out
+
+
+def test_memory_round_trips_via_write(tmp_path: Path) -> None:
+    loader = WorkspaceLoader(tmp_path)
+    loader.write("ali", "MEMORY", "- fact 1\n- fact 2\n")
+    ws = loader.load("ali")
+    assert ws.memory == "- fact 1\n- fact 2\n"

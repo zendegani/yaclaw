@@ -360,6 +360,8 @@ def main() -> None:
             approval_router=approval_router,
             store=store,
         )
+        _attach_reflector(hooks=hooks, provider=provider, model=model,
+                          store=store, loader=loader)
     else:
         handler = _default_handler  # echo stub keeps the server bootable offline
 
@@ -440,6 +442,44 @@ def _attach_trace_sink(hooks: HookManager) -> None:
         "or 'none'); LLM tracing disabled.",
         backend,
     )
+
+
+def _attach_reflector(
+    *,
+    hooks: HookManager,
+    provider: Any,
+    model: str,
+    store: SessionStore,
+    loader: Any,
+) -> None:
+    """Subscribe the Reflector to `on_turn_complete` if enabled.
+
+    Off by default (extraction is an extra LLM call per N turns). Set
+    `PISHKAR_REFLECTOR_ENABLED=1` to opt in. `PISHKAR_REFLECTOR_EVERY_N`
+    overrides the default trigger cadence (10 successful turns)."""
+    if os.environ.get("PISHKAR_REFLECTOR_ENABLED", "").lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return
+    raw = os.environ.get("PISHKAR_REFLECTOR_EVERY_N")
+    every_n = 10
+    if raw:
+        try:
+            every_n = max(1, int(raw))
+        except ValueError:
+            logger.warning(
+                "PISHKAR_REFLECTOR_EVERY_N=%r not an int; using default 10", raw
+            )
+    from pishkar.observability.reflector import Reflector
+
+    Reflector(
+        provider=provider,
+        model=model,
+        store=store,
+        loader=loader,
+        every_n_turns=every_n,
+    ).attach(hooks)
+    logger.info("reflector enabled (every %d turns)", every_n)
 
 
 def _telegram_factory_from_env(

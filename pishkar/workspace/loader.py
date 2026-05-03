@@ -17,8 +17,10 @@ from pydantic import BaseModel
 
 from pishkar.workspace.atomic_io import atomic_write_text
 
-WorkspaceFile = Literal["SOUL", "AGENTS", "USER", "HEARTBEAT"]
-_FILES: tuple[WorkspaceFile, ...] = ("SOUL", "AGENTS", "USER", "HEARTBEAT")
+WorkspaceFile = Literal["SOUL", "AGENTS", "USER", "HEARTBEAT", "MEMORY"]
+_FILES: tuple[WorkspaceFile, ...] = (
+    "SOUL", "AGENTS", "USER", "HEARTBEAT", "MEMORY",
+)
 
 
 class Skill(BaseModel):
@@ -36,6 +38,7 @@ class Workspace(BaseModel):
     agents: str = ""
     user: str = ""
     heartbeat: str = ""
+    memory: str = ""
     skills: list[Skill] = []
 
 
@@ -123,11 +126,14 @@ class WorkspaceLoader:
 
 
 def compose_system_prompt(ws: Workspace, *, base: str) -> str:
-    """Stitch SOUL.md + USER.md into the system prompt.
+    """Stitch SOUL.md + USER.md + MEMORY.md + skills into the system prompt.
 
     SOUL is the persona and operating instructions; USER is the live
-    user-context document the agent both reads and writes. Empty sections
-    are skipped so a brand-new workspace doesn't waste tokens on headers.
+    user-context document the agent both reads and writes; MEMORY is the
+    Reflector's append-only ledger of facts extracted from past turns;
+    skills are operating procedures the agent has been taught. Empty
+    sections are skipped so a brand-new workspace doesn't waste tokens
+    on headers.
 
     The absolute workspace path is included so the agent uses fully
     qualified paths when calling `read_file` / `write_file` — tools
@@ -149,4 +155,15 @@ def compose_system_prompt(ws: Workspace, *, base: str) -> str:
         parts.append("# Persona (SOUL.md)\n\n" + ws.soul.strip())
     if ws.user.strip():
         parts.append("# About the user (USER.md)\n\n" + ws.user.strip())
+    if ws.memory.strip():
+        parts.append("# Remembered facts (MEMORY.md)\n\n" + ws.memory.strip())
+    if ws.skills:
+        skill_blocks: list[str] = []
+        for s in ws.skills:
+            head = f"## {s.name}"
+            if s.description:
+                head += f" — {s.description}"
+            body = s.body.strip()
+            skill_blocks.append(f"{head}\n\n{body}" if body else head)
+        parts.append("# Skills\n\n" + "\n\n".join(skill_blocks))
     return "\n\n".join(parts)
