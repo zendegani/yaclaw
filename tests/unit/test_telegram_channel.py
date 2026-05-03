@@ -20,7 +20,6 @@ from pishkar.gateway.gateway import Gateway
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
 
-
 # --- TelegramChannel: outbound formatting ---------------------------------
 
 
@@ -283,3 +282,154 @@ def test_factory_returns_runner_when_configured(
     runners = factory(fake_gw, None, UserChannelRegistry())
     assert len(runners) == 1
     assert isinstance(runners[0], TelegramBotRunner)
+
+
+# --- /provider and /model commands ----------------------------------------
+
+
+from pishkar.runtime import ModelSelector  # noqa: E402
+
+
+def _selector(default: str = "claude-opus-4-7") -> ModelSelector:
+    return ModelSelector(
+        default=default,
+        available={
+            "anthropic": ["claude-opus-4-7", "claude-sonnet-4-6"],
+            "groq": ["groq/llama-3.3-70b-versatile"],
+        },
+    )
+
+
+def _make_runner_with_selector(
+    gw: Gateway, selector: ModelSelector, *, owner_id: int = 100
+) -> TelegramBotRunner:
+    runner = TelegramBotRunner(
+        token="x",
+        owner_id=owner_id,
+        user_id="ali",
+        gateway=gw,
+        approval_router=ApprovalRouter(),
+        model_selector=selector,
+    )
+    fake_app = MagicMock()
+    fake_app.bot.send_message = AsyncMock()
+    runner._app = fake_app  # type: ignore[attr-defined]
+    return runner
+
+
+async def test_on_provider_lists_available(gateway: Gateway) -> None:
+    runner = _make_runner_with_selector(gateway, _selector())
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = []
+    await runner._on_provider(update, ctx)
+    update.message.reply_text.assert_awaited()
+    kwargs = update.message.reply_text.await_args.kwargs
+    keyboard = kwargs["reply_markup"].inline_keyboard
+    callback_data = [row[0].callback_data for row in keyboard]
+    assert "pick_provider:anthropic" in callback_data
+    assert "pick_provider:groq" in callback_data
+
+
+async def test_on_model_requires_provider_for_unknown_default(
+    gateway: Gateway,
+) -> None:
+    selector = ModelSelector(
+        default="some/unknown-model",
+        available={"anthropic": ["claude-opus-4-7"]},
+    )
+    runner = _make_runner_with_selector(gateway, selector)
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = []
+    await runner._on_model(update, ctx)
+    text = update.message.reply_text.await_args.args[0]
+    assert "/provider" in text
+
+
+async def test_on_model_lists_models_for_current_provider(
+    gateway: Gateway,
+) -> None:
+    runner = _make_runner_with_selector(gateway, _selector())
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = []
+    await runner._on_model(update, ctx)
+    kwargs = update.message.reply_text.await_args.kwargs
+    keyboard = kwargs["reply_markup"].inline_keyboard
+    callback_data = [row[0].callback_data for row in keyboard]
+    assert "pick_model:claude-opus-4-7" in callback_data
+    assert "pick_model:claude-sonnet-4-6" in callback_data
+
+
+async def test_callback_pick_provider_updates_chat_state(
+    gateway: Gateway,
+) -> None:
+    runner = _make_runner_with_selector(gateway, _selector())
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.callback_query.data = "pick_provider:groq"
+    update.callback_query.message.chat_id = 7
+    update.callback_query.message.text = "Pick a provider"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    update.callback_query.edit_message_reply_markup = AsyncMock()
+    await runner._on_callback(update, MagicMock())
+    assert runner._chat_provider[7] == "groq"
+
+
+async def test_callback_pick_model_sets_selector(gateway: Gateway) -> None:
+    selector = _selector()
+    runner = _make_runner_with_selector(gateway, selector)
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.callback_query.data = "pick_model:claude-sonnet-4-6"
+    update.callback_query.message.chat_id = 1
+    update.callback_query.message.text = "Pick a model"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    update.callback_query.edit_message_reply_markup = AsyncMock()
+    await runner._on_callback(update, MagicMock())
+    assert selector.current() == "claude-sonnet-4-6"
+
+
+async def test_on_provider_arg_form_sets_chat_provider(gateway: Gateway) -> None:
+    runner = _make_runner_with_selector(gateway, _selector())
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = ["groq"]
+    await runner._on_provider(update, ctx)
+    assert runner._chat_provider[1] == "groq"
+
+
+async def test_on_model_arg_form_validates_against_provider(
+    gateway: Gateway,
+) -> None:
+    selector = _selector(default="claude-sonnet-4-6")
+    runner = _make_runner_with_selector(gateway, selector)
+    runner._chat_provider[1] = "groq"
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.reply_text = AsyncMock()
+    # Anthropic model under groq provider — should be rejected.
+    ctx = MagicMock()
+    ctx.args = ["claude-opus-4-7"]
+    await runner._on_model(update, ctx)
+    assert selector.current() == "claude-sonnet-4-6"  # unchanged
+    # Valid groq model — should stick.
+    ctx.args = ["groq/llama-3.3-70b-versatile"]
+    await runner._on_model(update, ctx)
+    assert selector.current() == "groq/llama-3.3-70b-versatile"

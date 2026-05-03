@@ -54,7 +54,7 @@ DEFAULT_SYSTEM = (
 def build_handler(
     *,
     provider: ModelProvider,
-    model: str,
+    model: str | ModelSelector,
     registry: ToolRegistry | None = None,
     runner: SubprocessToolRunner | None = None,
     hooks: HookManager | None = None,
@@ -65,6 +65,7 @@ def build_handler(
     gated_tools: frozenset[str] = DEFAULT_GATED_TOOLS,
     store: SessionStore | None = None,
 ) -> Handler:
+    selector = model if isinstance(model, ModelSelector) else ModelSelector(default=model)
     registry = registry or _default_registry()
     histories: dict[str, list[dict[str, Any]]] = {}
     gates: dict[str, ApprovalGate] = {}
@@ -157,7 +158,7 @@ def build_handler(
                 runner=turn_runner,
                 tool_schemas=tool_schemas,
                 system=turn_system,
-                model=model,
+                model=selector.current(),
                 hooks=hooks,
             ):
                 yield event
@@ -220,11 +221,18 @@ def build_default_provider() -> tuple[ModelProvider, str]:
     """Construct the production LiteLLM router from environment.
 
     Picks a default model based on which `*_API_KEY` is present (override
-    with `PISHKAR_MODEL`). litellm reads the key envs itself.
+    with `PISHKAR_MODEL`). Registers every model from
+    `discover_available_models()` plus the default, so `/model` can
+    switch between them at runtime without rebuilding the Router.
+    litellm reads the key envs itself.
     """
     model = os.environ.get("PISHKAR_MODEL") or _default_model_for_env()
+    candidates: set[str] = {model}
+    for models in discover_available_models().values():
+        candidates.update(models)
     model_list: list[dict[str, Any]] = [
-        {"model_name": model, "litellm_params": {"model": _litellm_name(model)}},
+        {"model_name": m, "litellm_params": {"model": _litellm_name(m)}}
+        for m in sorted(candidates)
     ]
     completion = build_router_completion(model_list)
     return LiteLLMProvider(completion), model
@@ -242,6 +250,105 @@ PROVIDER_KEYS: tuple[tuple[str, str, str], ...] = (
     ("GEMINI_API_KEY", "gemini-3-flash-preview", "gemini"),
     ("GOOGLE_API_KEY", "gemini-3-flash-preview", "gemini"),
 )
+
+# Curated catalog of swappable models per provider, surfaced by the
+# Telegram `/model` command. Entries are in litellm naming so they go
+# straight to the Router. Add to this list as new options come up — it
+# is intentionally compact rather than exhaustive.
+KNOWN_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
+    "anthropic": (
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+    ),
+    "openai": (
+        "gpt-4o",
+        "gpt-4o-mini",
+    ),
+    "gemini": (
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+    ),
+    "groq": (
+        "groq/llama-3.3-70b-versatile",
+        "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+        "groq/meta-llama/llama-4-maverick-17b-128e-instruct",
+    ),
+    "moonshot": (
+        "moonshot/moonshot-v1-8k",
+        "moonshot/moonshot-v1-32k",
+        "moonshot/moonshot-v1-128k",
+    ),
+    "dashscope": (
+        "dashscope/qwen-turbo",
+        "dashscope/qwen-plus",
+        "dashscope/qwen-max",
+    ),
+}
+
+
+def discover_available_models() -> dict[str, list[str]]:
+    """Return `{provider: [model, …]}` for providers whose API key is set.
+
+    Used to populate the Telegram `/provider` and `/model` keyboards and
+    to register the LiteLLM Router with every model the user could pick."""
+    available: dict[str, list[str]] = {}
+    for env_key, _, provider in PROVIDER_KEYS:
+        if not os.environ.get(env_key):
+            continue
+        models = KNOWN_MODELS_BY_PROVIDER.get(provider)
+        if not models:
+            continue
+        available.setdefault(provider, list(models))
+    return available
+
+
+def provider_for_model(model: str) -> str | None:
+    """Reverse-lookup the provider that owns a given model string."""
+    for prov, models in KNOWN_MODELS_BY_PROVIDER.items():
+        if model in models:
+            return prov
+    return None
+
+
+class ModelSelector:
+    """Small mutable holder for the active model.
+
+    Shared between `build_handler` (reads `current()` per turn) and
+    `TelegramBotRunner` (writes via `/model`). Defaults to the model
+    chosen by `build_default_provider`; `set_model` validates against
+    `available()` so a typo at the keyboard can't push us off-catalog."""
+
+    def __init__(
+        self,
+        default: str,
+        available: dict[str, list[str]] | None = None,
+    ) -> None:
+        self._default = default
+        self._current = default
+        self._available = available if available is not None else discover_available_models()
+
+    def current(self) -> str:
+        return self._current
+
+    def default(self) -> str:
+        return self._default
+
+    def available(self) -> dict[str, list[str]]:
+        return {prov: list(models) for prov, models in self._available.items()}
+
+    def models_for(self, provider: str) -> list[str]:
+        return list(self._available.get(provider, []))
+
+    def set_model(self, model: str) -> bool:
+        for models in self._available.values():
+            if model in models:
+                self._current = model
+                return True
+        return False
+
+    def reset(self) -> None:
+        self._current = self._default
 
 # Bare model-name prefix → litellm provider prefix. Lets users say
 # `claude-opus-4-7` instead of `anthropic/claude-opus-4-7`.
@@ -283,7 +390,11 @@ def _litellm_name(model: str) -> str:
 
 __all__ = [
     "DEFAULT_SYSTEM",
+    "KNOWN_MODELS_BY_PROVIDER",
+    "ModelSelector",
     "build_default_provider",
     "build_handler",
+    "discover_available_models",
+    "provider_for_model",
     "recover_on_startup",
 ]

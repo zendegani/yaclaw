@@ -2,7 +2,6 @@ import pytest
 
 from pishkar.runtime import _default_model_for_env, _litellm_name
 
-
 _PROVIDER_KEYS = (
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
@@ -78,3 +77,63 @@ def test_default_model_falls_back_to_anthropic_when_no_key() -> None:
 )
 def test_litellm_name_normalization(model: str, expected: str) -> None:
     assert _litellm_name(model) == expected
+
+
+# --- ModelSelector + discover_available_models ----------------------------
+
+
+from pishkar.runtime import (  # noqa: E402
+    KNOWN_MODELS_BY_PROVIDER,
+    ModelSelector,
+    discover_available_models,
+    provider_for_model,
+)
+
+
+def test_discover_picks_only_providers_with_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for k, _, _ in [
+        ("ANTHROPIC_API_KEY", "", ""),
+        ("OPENAI_API_KEY", "", ""),
+        ("GROQ_API_KEY", "", ""),
+        ("GEMINI_API_KEY", "", ""),
+        ("GOOGLE_API_KEY", "", ""),
+        ("OPENROUTER_API_KEY", "", ""),
+        ("MOONSHOT_API_KEY", "", ""),
+        ("DASHSCOPE_API_KEY", "", ""),
+    ]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "x")
+    available = discover_available_models()
+    assert "groq" in available
+    assert "anthropic" not in available
+    assert available["groq"] == list(KNOWN_MODELS_BY_PROVIDER["groq"])
+
+
+def test_provider_for_model_reverse_lookup() -> None:
+    assert provider_for_model("claude-opus-4-7") == "anthropic"
+    assert provider_for_model("groq/llama-3.3-70b-versatile") == "groq"
+    assert provider_for_model("not-a-real-model") is None
+
+
+def test_selector_set_model_validates_against_catalog() -> None:
+    sel = ModelSelector(
+        default="claude-opus-4-7",
+        available={"anthropic": ["claude-opus-4-7", "claude-haiku-4-5"]},
+    )
+    assert sel.current() == "claude-opus-4-7"
+    assert sel.set_model("claude-haiku-4-5") is True
+    assert sel.current() == "claude-haiku-4-5"
+    assert sel.set_model("groq/llama-3.3-70b-versatile") is False
+    assert sel.current() == "claude-haiku-4-5"  # unchanged
+
+
+def test_selector_reset_returns_to_default() -> None:
+    sel = ModelSelector(
+        default="claude-opus-4-7",
+        available={"anthropic": ["claude-opus-4-7", "claude-haiku-4-5"]},
+    )
+    sel.set_model("claude-haiku-4-5")
+    sel.reset()
+    assert sel.current() == "claude-opus-4-7"

@@ -17,10 +17,10 @@ import contextlib
 import html
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -43,6 +43,7 @@ from pishkar.core.messages import InboundMessage
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway
 from pishkar.gateway.user_registry import UserChannelRegistry
+from pishkar.runtime import ModelSelector, provider_for_model
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
 
@@ -221,6 +222,7 @@ class TelegramBotRunner:
         approval_router: ApprovalRouter | None = None,
         store: SessionStore | None = None,
         user_registry: UserChannelRegistry | None = None,
+        model_selector: ModelSelector | None = None,
     ) -> None:
         self._token = token
         self._owner_id = owner_id
@@ -229,9 +231,11 @@ class TelegramBotRunner:
         self._approval_router = approval_router
         self._store = store
         self._user_registry = user_registry
+        self._model_selector = model_selector
         self._app: Application | None = None
         self._sessions: dict[int, str] = {}
         self._channels: dict[int, TelegramChannel] = {}
+        self._chat_provider: dict[int, str] = {}
 
     async def start(self) -> None:
         app = Application.builder().token(self._token).build()
@@ -240,6 +244,8 @@ class TelegramBotRunner:
         app.add_handler(CommandHandler("new", self._on_new))
         app.add_handler(CommandHandler("sessions", self._on_sessions))
         app.add_handler(CommandHandler("switch", self._on_switch))
+        app.add_handler(CommandHandler("provider", self._on_provider))
+        app.add_handler(CommandHandler("model", self._on_model))
         app.add_handler(CallbackQueryHandler(self._on_callback))
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
@@ -300,6 +306,8 @@ class TelegramBotRunner:
             "/sessions — list recent sessions\n"
             "/switch latest — jump to the most recent session\n"
             "/switch <id-prefix> — switch to a specific session\n"
+            "/provider — choose LLM provider (Anthropic / Groq / …)\n"
+            "/model — choose model within the selected provider\n"
             "/help — this message"
         )
 
@@ -409,6 +417,108 @@ class TelegramBotRunner:
         )
         await self._gateway.submit(msg)
 
+    async def _on_provider(
+        self, update: Update, ctx: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update) or update.message is None:
+            return
+        if self._model_selector is None:
+            await update.message.reply_text("Model switching unavailable.")
+            return
+        available = self._model_selector.available()
+        if not available:
+            await update.message.reply_text(
+                "No providers available — set an API key in .env first."
+            )
+            return
+        chat_id = update.message.chat_id
+        current_model = self._model_selector.current()
+        current_provider = (
+            self._chat_provider.get(chat_id) or provider_for_model(current_model) or ""
+        )
+        if ctx.args:
+            arg = ctx.args[0].lower()
+            if arg in available:
+                self._chat_provider[chat_id] = arg
+                await update.message.reply_text(
+                    f"Provider set to <b>{html.escape(arg)}</b>. "
+                    f"Use /model to pick a model.",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(
+                    f"Unknown provider '{html.escape(arg)}'. "
+                    f"Available: {', '.join(sorted(available))}",
+                    parse_mode="HTML",
+                )
+            return
+        rows = [
+            [InlineKeyboardButton(
+                f"{'• ' if prov == current_provider else ''}{prov}",
+                callback_data=f"pick_provider:{prov}",
+            )]
+            for prov in sorted(available)
+        ]
+        await update.message.reply_text(
+            f"Current model: <code>{html.escape(current_model)}</code>\n"
+            f"Pick a provider:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+
+    async def _on_model(
+        self, update: Update, ctx: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update) or update.message is None:
+            return
+        if self._model_selector is None:
+            await update.message.reply_text("Model switching unavailable.")
+            return
+        chat_id = update.message.chat_id
+        current_model = self._model_selector.current()
+        provider = (
+            self._chat_provider.get(chat_id) or provider_for_model(current_model)
+        )
+        if provider is None:
+            await update.message.reply_text(
+                "Pick a provider first with /provider."
+            )
+            return
+        models = self._model_selector.models_for(provider)
+        if not models:
+            await update.message.reply_text(
+                f"No models registered for provider '{html.escape(provider)}'.",
+                parse_mode="HTML",
+            )
+            return
+        if ctx.args:
+            target = ctx.args[0]
+            if target in models and self._model_selector.set_model(target):
+                await update.message.reply_text(
+                    f"Model set to <code>{html.escape(target)}</code>.",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(
+                    f"Unknown model for {html.escape(provider)}. Try /model.",
+                    parse_mode="HTML",
+                )
+            return
+        rows = [
+            [InlineKeyboardButton(
+                f"{'• ' if m == current_model else ''}{m}",
+                callback_data=f"pick_model:{m}",
+            )]
+            for m in models
+        ]
+        await update.message.reply_text(
+            f"Provider: <b>{html.escape(provider)}</b>\n"
+            f"Current model: <code>{html.escape(current_model)}</code>\n"
+            f"Pick a model:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+
     async def _on_callback(
         self, update: Update, _: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -418,12 +528,49 @@ class TelegramBotRunner:
         if query is None or query.data is None or query.message is None:
             return
         await query.answer()
+        prefix, _sep, payload = query.data.partition(":")
+        message = cast(Message, query.message)
+        chat_id = message.chat_id
+
+        if prefix == "pick_provider":
+            if self._model_selector is None:
+                return
+            if payload in self._model_selector.available():
+                self._chat_provider[chat_id] = payload
+            with contextlib.suppress(Exception):
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.edit_message_text(
+                    text=(
+                        f"Provider: <b>{html.escape(payload)}</b>. "
+                        f"Use /model to pick a model."
+                    ),
+                    parse_mode="HTML",
+                )
+            return
+
+        if prefix == "pick_model":
+            if self._model_selector is None:
+                return
+            ok = self._model_selector.set_model(payload)
+            with contextlib.suppress(Exception):
+                await query.edit_message_reply_markup(reply_markup=None)
+                if ok:
+                    await query.edit_message_text(
+                        text=f"Model set to <code>{html.escape(payload)}</code>.",
+                        parse_mode="HTML",
+                    )
+                else:
+                    await query.edit_message_text(
+                        text=f"Could not set model to {html.escape(payload)}.",
+                        parse_mode="HTML",
+                    )
+            return
+
         try:
-            decision_raw, request_id = query.data.split(":", 1)
-            decision = ApprovalDecision(decision_raw)
+            decision = ApprovalDecision(prefix)
+            request_id = payload
         except ValueError:
             return
-        chat_id = query.message.chat_id
         session_id = self._sessions.get(chat_id)
         if session_id is None or self._approval_router is None:
             return
@@ -432,7 +579,7 @@ class TelegramBotRunner:
             label = "Allowed" if decision != ApprovalDecision.DENY else "Denied"
             await query.edit_message_reply_markup(reply_markup=None)
             await query.edit_message_text(
-                text=f"{query.message.text}\n\n→ {label}"
+                text=f"{message.text}\n\n→ {label}"
             )
 
     # ---- session lifecycle ----------------------------------------------

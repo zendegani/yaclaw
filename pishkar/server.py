@@ -338,16 +338,22 @@ def main() -> None:
     approval_router = ApprovalRouter()
     hooks = HookManager()
     _attach_trace_sink(hooks)
+    model_selector = None
     if has_key:
-        from pishkar.runtime import build_default_provider, build_handler
+        from pishkar.runtime import (
+            ModelSelector,
+            build_default_provider,
+            build_handler,
+        )
         from pishkar.workspace.loader import WorkspaceLoader
 
         loader = WorkspaceLoader(base_dir=db_path.parent)
         loader.ensure_starter(os.environ.get("PISHKAR_USER", "user"))
         provider, model = build_default_provider()
+        model_selector = ModelSelector(default=model)
         handler = build_handler(
             provider=provider,
-            model=model,
+            model=model_selector,
             hooks=hooks,
             workspace_loader=loader,
             interrupted_sessions=interrupted,
@@ -366,6 +372,7 @@ def main() -> None:
         channel_runner_factory=_telegram_factory_from_env(
             user_id=os.environ.get("PISHKAR_USER", "user"),
             store=store,
+            model_selector=model_selector,
         ),
     )
     uvicorn.run(app, host="127.0.0.1", port=8765)
@@ -435,7 +442,12 @@ def _attach_trace_sink(hooks: HookManager) -> None:
     )
 
 
-def _telegram_factory_from_env(*, user_id: str, store: SessionStore | None = None):
+def _telegram_factory_from_env(
+    *,
+    user_id: str,
+    store: SessionStore | None = None,
+    model_selector: Any = None,
+):
     """Return a channel-runner factory if `TELEGRAM_BOT_TOKEN` is set,
     otherwise None. The runner is constructed lazily inside `create_app`
     so it can take the gateway built there."""
@@ -467,6 +479,7 @@ def _telegram_factory_from_env(*, user_id: str, store: SessionStore | None = Non
                 approval_router=approval_router,
                 store=store,
                 user_registry=user_registry,
+                model_selector=model_selector,
             )
         ]
 
