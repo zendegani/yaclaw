@@ -36,6 +36,11 @@ from pishkar.workspace.store import SessionStore
 # are gated.
 DEFAULT_GATED_TOOLS: frozenset[str] = frozenset({"write_file", "http", "bash"})
 
+# Default cap on tool-result bytes fed back into the LLM context. Sized to
+# stay comfortably under typical free-tier TPM limits (e.g. Groq Scout at
+# 30k tokens/min); raise via `PISHKAR_TOOL_MAX_BYTES` for paid tiers.
+DEFAULT_TOOL_MAX_BYTES = 16_000
+
 DEFAULT_SYSTEM = (
     "You are Pishkar, a personal AI butler. Be concise and direct. "
     "Use tools when they help; otherwise just answer."
@@ -61,6 +66,7 @@ def build_handler(
     gates: dict[str, ApprovalGate] = {}
     tool_schemas = registry.schemas("openai")
     interrupted = interrupted_sessions if interrupted_sessions is not None else set()
+    tool_max_bytes = _tool_max_bytes_from_env()
 
     def _make_gate(session_id: str, user_id: str) -> ApprovalGate:
         all_tools = set(registry.names())
@@ -94,7 +100,12 @@ def build_handler(
         if gate is None:
             gate = _make_gate(session_id, user_id)
             gates[session_id] = gate
-        return SubprocessToolRunner(registry, hooks=hooks, approval_fn=gate.check)
+        return SubprocessToolRunner(
+            registry,
+            hooks=hooks,
+            approval_fn=gate.check,
+            default_max_bytes=tool_max_bytes,
+        )
 
     async def _hydrate(session_id: str) -> list[dict[str, Any]]:
         if store is None:
@@ -182,6 +193,17 @@ async def _session_id_for_turn(store: SessionStore, turn_id: str) -> str | None:
     ) as cur:
         row = await cur.fetchone()
     return row[0] if row else None
+
+
+def _tool_max_bytes_from_env() -> int:
+    raw = os.environ.get("PISHKAR_TOOL_MAX_BYTES")
+    if not raw:
+        return DEFAULT_TOOL_MAX_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_TOOL_MAX_BYTES
+    return value if value > 0 else DEFAULT_TOOL_MAX_BYTES
 
 
 def _default_registry() -> ToolRegistry:
