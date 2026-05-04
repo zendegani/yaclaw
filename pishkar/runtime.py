@@ -31,6 +31,7 @@ from pishkar.tools.read_url import read_url
 from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
 from pishkar.tools.search import search
+from pishkar.tools.speak import speak
 from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
 from pishkar.workspace.store import SessionStore
 
@@ -222,7 +223,7 @@ def _tool_max_bytes_from_env() -> int:
 def _default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register_many(
-        read_file, write_file, http, bash, read_url, search, plan,
+        read_file, write_file, http, bash, read_url, search, plan, speak,
     )
     return reg
 

@@ -46,6 +46,7 @@ from pishkar.gateway.user_registry import UserChannelRegistry
 from pishkar.runtime import ModelSelector, provider_for_model
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.voice import Synthesizer, Transcriber
+from pishkar.voice import dispatcher as voice_dispatcher
 from pishkar.workspace.store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -328,6 +329,7 @@ class TelegramBotRunner:
                 self._gateway.detach_channel(session_id, channel)
                 if self._approval_router is not None:
                     self._approval_router.unbind(session_id, channel="telegram")
+                voice_dispatcher.unregister_speaker(session_id)
             if self._user_registry is not None:
                 await self._user_registry.unregister(
                     self._user_id, channel.send_event
@@ -754,7 +756,25 @@ class TelegramBotRunner:
             await self._user_registry.register(
                 self._user_id, sid, channel.send_event
             )
+        if self._synthesizer is not None and self._app is not None:
+            voice_dispatcher.register_speaker(
+                sid, self._make_speaker(channel)
+            )
         return sid
+
+    def _make_speaker(
+        self, channel: TelegramChannel
+    ) -> voice_dispatcher.Speaker:
+        """Build the per-channel speaker callback for `voice_dispatcher`.
+
+        Suppresses the implicit voice-mirror so a `speak` tool call after
+        a voice-in turn doesn't emit two voice notes.
+        """
+        async def _speak(text: str) -> None:
+            channel.voice_reply = False
+            await channel._send_voice_reply(text)
+
+        return _speak
 
     async def _rotate_session(
         self, chat_id: int, *, session_id: str | None = None
@@ -769,6 +789,7 @@ class TelegramBotRunner:
                 await self._user_registry.unregister(
                     self._user_id, old_channel.send_event
                 )
+            voice_dispatcher.unregister_speaker(old_session)
             await old_channel.close()
         await self._open_session(chat_id, session_id=session_id)
 

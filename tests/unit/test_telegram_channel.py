@@ -686,3 +686,60 @@ async def test_runner_voice_handler_ignores_non_owner(
     update.effective_user.id = 999
     await runner._on_voice(update, MagicMock())
     assert runner._sessions == {}
+
+
+# --- speak tool integration -----------------------------------------------
+
+
+async def test_open_session_registers_speaker_when_synth_present(
+    gateway: Gateway,
+) -> None:
+    from pishkar.voice import dispatcher as voice_dispatcher
+
+    voice_dispatcher.reset()
+    runner = _make_runner(gateway)
+    runner._synthesizer = _StubSynth()  # type: ignore[attr-defined]
+
+    sid = await runner._ensure_channel(chat_id=1)
+    # Speaker should now be findable for this session id.
+    sent: list[bytes] = []
+
+    async def fake_send_voice(*, chat_id: int, voice: bytes) -> None:
+        sent.append(voice)
+
+    runner._channels[1]._send_voice = fake_send_voice  # type: ignore[attr-defined]
+    ok = await voice_dispatcher.speak(sid, "hello world")
+    assert ok is True
+    assert sent == [b"OGGOUT"]
+    voice_dispatcher.reset()
+
+
+async def test_speak_clears_voice_reply_flag(gateway: Gateway) -> None:
+    """Calling `speak` after a voice-in turn must suppress the implicit
+    mirror so the user doesn't get two voice notes for one turn."""
+    from pishkar.voice import dispatcher as voice_dispatcher
+
+    voice_dispatcher.reset()
+    runner = _make_runner(gateway)
+    runner._synthesizer = _StubSynth()  # type: ignore[attr-defined]
+    sid = await runner._ensure_channel(chat_id=1)
+    channel = runner._channels[1]
+    channel.voice_reply = True
+    channel._send_voice = AsyncMock()  # type: ignore[attr-defined]
+
+    await voice_dispatcher.speak(sid, "explicit voice")
+    assert channel.voice_reply is False
+    voice_dispatcher.reset()
+
+
+async def test_rotate_session_unregisters_speaker(gateway: Gateway) -> None:
+    from pishkar.voice import dispatcher as voice_dispatcher
+
+    voice_dispatcher.reset()
+    runner = _make_runner(gateway)
+    runner._synthesizer = _StubSynth()  # type: ignore[attr-defined]
+    old_sid = await runner._ensure_channel(chat_id=1)
+    await runner._rotate_session(chat_id=1)
+    # The old session id should no longer have a speaker.
+    assert await voice_dispatcher.speak(old_sid, "hi") is False
+    voice_dispatcher.reset()
