@@ -21,11 +21,15 @@ export function TracePage() {
   const [enabled, setEnabled] = useState<Record<string, boolean>>(
     () => Object.fromEntries(TYPES.map((t) => [t, t !== "content_block_delta"])),
   );
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const filtered = useMemo(
     () => raw.filter((e) => enabled[e.event.type] ?? true),
     [raw, enabled],
   );
+
+  const rowKey = (entry: { ts: number; event: { event_id?: string } }, i: number) =>
+    entry.event.event_id ?? `${entry.ts}-${i}`;
 
   return (
     <div className="flex h-full flex-col">
@@ -63,22 +67,42 @@ export function TracePage() {
           </div>
         )}
         <ul className="space-y-1">
-          {filtered.map((entry, i) => (
-            <li
-              key={i}
-              className="flex gap-2 rounded border border-border/50 bg-background px-2 py-1"
-            >
-              <span className="shrink-0 text-muted-foreground">
-                {new Date(entry.ts).toLocaleTimeString()}
-              </span>
-              <span className="shrink-0 font-semibold text-primary">
-                {entry.event.type}
-              </span>
-              <span className="truncate text-muted-foreground">
-                {JSON.stringify(entry.event)}
-              </span>
-            </li>
-          ))}
+          {filtered.map((entry, i) => {
+            const key = rowKey(entry, i);
+            const isOpen = !!expanded[key];
+            return (
+              <li
+                key={key}
+                className="rounded border border-border/50 bg-background"
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpanded((s) => ({ ...s, [key]: !s[key] }))
+                  }
+                  className="flex w-full cursor-pointer gap-2 px-2 py-1 text-left hover:bg-muted/50"
+                >
+                  <span className="shrink-0 text-muted-foreground">
+                    {isOpen ? "▾" : "▸"}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {new Date(entry.ts).toLocaleTimeString()}
+                  </span>
+                  <span className="shrink-0 font-semibold text-primary">
+                    {entry.event.type}
+                  </span>
+                  <span className="truncate text-muted-foreground">
+                    {JSON.stringify(entry.event)}
+                  </span>
+                </button>
+                {isOpen && (
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-border/50 bg-muted/30 px-3 py-2 text-[11px] leading-relaxed">
+                    {JSON.stringify(entry.event, null, 2)}
+                  </pre>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </div>
