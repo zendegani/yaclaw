@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Send } from "lucide-react";
+import { Send, Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useChatState, appendUserMessage } from "@/state/store";
@@ -8,16 +8,50 @@ import { ToolCall } from "@/components/ToolCall";
 import { Thinking } from "@/components/Thinking";
 import { Inspector } from "@/components/Inspector";
 import { cn } from "@/lib/utils";
+import { getSessionId, getUserId } from "@/App";
+import {
+  RecorderController,
+  cancelSpeech,
+  getSpeakReplies,
+  speakText,
+  startRecording,
+  uploadVoice,
+} from "@/api/voice";
 
 export function ChatPage() {
   const socket = useSocket();
   const { items, status } = useChatState();
   const [draft, setDraft] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recorderRef = useRef<RecorderController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const spokenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [items]);
+
+  useEffect(() => {
+    if (!getSpeakReplies()) return;
+    const last = items[items.length - 1];
+    if (
+      !last
+      || last.kind !== "assistant"
+      || !last.turn.done
+      || !last.turn.text.trim()
+    ) {
+      return;
+    }
+    if (spokenRef.current.has(last.turn.turn_id)) return;
+    spokenRef.current.add(last.turn.turn_id);
+    speakText(last.turn.text);
+  }, [items]);
+
+  useEffect(() => {
+    return () => cancelSpeech();
+  }, []);
 
   const send = () => {
     const trimmed = draft.trim();
@@ -26,6 +60,46 @@ export function ChatPage() {
     socket.send(trimmed, messageId);
     appendUserMessage(trimmed, messageId);
     setDraft("");
+  };
+
+  const toggleRecording = async () => {
+    setVoiceError(null);
+    if (recording) {
+      const ctrl = recorderRef.current;
+      recorderRef.current = null;
+      setRecording(false);
+      if (!ctrl) return;
+      setVoiceBusy(true);
+      try {
+        const blob = await ctrl.stop();
+        if (blob.size === 0) {
+          setVoiceError("Empty recording.");
+          return;
+        }
+        const { transcript } = await uploadVoice(
+          getUserId(),
+          getSessionId(),
+          blob,
+        );
+        // Server already echoes the user_message event back through the
+        // WebSocket, so the chat list will show the transcript shortly —
+        // but render it locally for instant feedback.
+        appendUserMessage(transcript);
+      } catch (err) {
+        setVoiceError(err instanceof Error ? err.message : "Voice upload failed.");
+      } finally {
+        setVoiceBusy(false);
+      }
+      return;
+    }
+    try {
+      recorderRef.current = await startRecording();
+      setRecording(true);
+    } catch (err) {
+      setVoiceError(
+        err instanceof Error ? err.message : "Microphone access denied.",
+      );
+    }
   };
 
   return (
@@ -85,10 +159,23 @@ export function ChatPage() {
               rows={2}
               className={cn("resize-none", status !== "open" && "opacity-60")}
             />
+            <Button
+              variant={recording ? "destructive" : "outline"}
+              onClick={toggleRecording}
+              disabled={voiceBusy}
+              title={recording ? "Stop and send" : "Record voice"}
+            >
+              {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            </Button>
             <Button onClick={send} disabled={status !== "open" || !draft.trim()}>
               <Send className="h-4 w-4" />
             </Button>
           </div>
+          {(voiceBusy || voiceError) && (
+            <div className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground">
+              {voiceBusy ? "Transcribing…" : voiceError}
+            </div>
+          )}
         </div>
       </div>
       <Inspector />

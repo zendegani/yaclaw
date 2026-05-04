@@ -178,3 +178,72 @@ def test_invalid_inbound_json_is_ignored(app) -> None:
             ws.send_text(json.dumps({"content": "real"}))
             events = _drain_until(ws, "turn_end")
     assert any("echo:real" in json.dumps(e) for e in events)
+
+
+# --- /voice endpoint -------------------------------------------------------
+
+
+class _StubTranscriber:
+    def __init__(self, text: str = "hello there") -> None:
+        self.text = text
+        self.calls: list[tuple[bytes, str]] = []
+
+    async def transcribe(self, audio: bytes, *, mime: str = "audio/ogg") -> str:
+        self.calls.append((audio, mime))
+        return self.text
+
+
+def test_voice_returns_503_when_transcriber_missing(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "s.db")
+    app = create_app(store=store, handler=_echo)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/voice/ali/s1", files={"audio": ("a.webm", b"x", "audio/webm")}
+        )
+    assert resp.status_code == 503
+
+
+def test_voice_dispatches_transcript_through_websocket(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "s.db")
+    transcriber = _StubTranscriber(text="ping")
+    app = create_app(store=store, handler=_echo, transcriber=transcriber)
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/ali/s1") as ws:
+            resp = client.post(
+                "/voice/ali/s1",
+                files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
+            )
+            assert resp.status_code == 200
+            assert resp.json() == {"transcript": "ping"}
+            events = _drain_until(ws, "turn_end")
+    types = [e["type"] for e in events]
+    assert types == ["user_message", "turn_start", "content_block_delta", "turn_end"]
+    assert events[0]["content"] == "ping"
+    assert transcriber.calls == [(b"oggbytes", "audio/webm")]
+
+
+def test_voice_400_on_empty_transcript(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "s.db")
+    transcriber = _StubTranscriber(text="   ")
+    app = create_app(store=store, handler=_echo, transcriber=transcriber)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/voice/ali/s1",
+            files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
+        )
+    assert resp.status_code == 400
+
+
+def test_voice_502_when_transcribe_raises(tmp_path: Path) -> None:
+    class _BoomT:
+        async def transcribe(self, *_a, **_k) -> str:
+            raise RuntimeError("upstream down")
+
+    store = SessionStore(tmp_path / "s.db")
+    app = create_app(store=store, handler=_echo, transcriber=_BoomT())
+    with TestClient(app) as client:
+        resp = client.post(
+            "/voice/ali/s1",
+            files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
+        )
+    assert resp.status_code == 502

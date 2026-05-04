@@ -26,7 +26,7 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from pishkar.channels.ws import WebSocketChannel
@@ -80,6 +80,7 @@ def create_app(
     tool_registry: Any = None,
     model_selector: Any = None,
     user_id: str | None = None,
+    transcriber: Any = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -151,6 +152,46 @@ def create_app(
     async def _list_sessions(user_id: str) -> dict[str, Any]:
         rows = await store.recent_sessions_for_user(user_id)
         return {"sessions": rows}
+
+    @app.post("/voice/{user_id}/{session_id}")
+    async def _voice_in(
+        user_id: str,
+        session_id: str,
+        audio: UploadFile = File(...),  # noqa: B008  # FastAPI idiom
+    ) -> dict[str, str]:
+        """Browser-side voice input. The Web UI captures audio via
+        MediaRecorder, POSTs the blob here, and we transcribe it through
+        the configured Transcriber and dispatch as a normal text turn."""
+        if transcriber is None:
+            raise HTTPException(
+                status_code=503, detail="Voice input is not configured."
+            )
+        data = await audio.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty audio upload.")
+        try:
+            text = await transcriber.transcribe(
+                data, mime=audio.content_type or "audio/webm"
+            )
+        except Exception as exc:
+            logger.exception("voice transcription failed for user %s", user_id)
+            raise HTTPException(
+                status_code=502, detail="Transcription failed."
+            ) from exc
+        text = text.strip()
+        if not text:
+            raise HTTPException(
+                status_code=400, detail="Empty transcript."
+            )
+        await gateway.submit(
+            InboundMessage(
+                user_id=user_id,
+                session_id=session_id,
+                channel="web",
+                content=text,
+            )
+        )
+        return {"transcript": text}
 
     @app.post("/sessions/new/{user_id}")
     async def _new_session(user_id: str, source: str = "web") -> dict[str, str]:
@@ -397,6 +438,7 @@ def main() -> None:
         handler = _default_handler  # echo stub keeps the server bootable offline
 
     user_id = os.environ.get("PISHKAR_USER", "user")
+    transcriber = _build_transcriber()
     app = create_app(
         store=store,
         handler=handler,
@@ -406,11 +448,12 @@ def main() -> None:
         tool_registry=tool_registry,
         model_selector=model_selector,
         user_id=user_id,
+        transcriber=transcriber,
         channel_runner_factory=_telegram_factory_from_env(
             user_id=user_id,
             store=store,
             model_selector=model_selector,
-            transcriber=_build_transcriber(),
+            transcriber=transcriber,
             synthesizer=_build_synthesizer(),
         ),
     )
