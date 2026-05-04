@@ -410,6 +410,8 @@ def main() -> None:
             user_id=user_id,
             store=store,
             model_selector=model_selector,
+            transcriber=_build_transcriber(),
+            synthesizer=_build_synthesizer(),
         ),
     )
     uvicorn.run(app, host="127.0.0.1", port=8765)
@@ -519,11 +521,31 @@ def _attach_reflector(
     logger.info("reflector enabled (every %d turns)", every_n)
 
 
+def _build_transcriber() -> Any:
+    """Construct an STT engine if voice is enabled, else None."""
+    try:
+        from pishkar.voice.stt import build_transcriber_from_env
+    except ImportError:
+        return None
+    return build_transcriber_from_env()
+
+
+def _build_synthesizer() -> Any:
+    """Construct a TTS engine if voice replies are enabled, else None."""
+    try:
+        from pishkar.voice.tts import build_synthesizer_from_env
+    except ImportError:
+        return None
+    return build_synthesizer_from_env()
+
+
 def _telegram_factory_from_env(
     *,
     user_id: str,
     store: SessionStore | None = None,
     model_selector: Any = None,
+    transcriber: Any = None,
+    synthesizer: Any = None,
 ):
     """Return a channel-runner factory if `TELEGRAM_BOT_TOKEN` is set,
     otherwise None. The runner is constructed lazily inside `create_app`
@@ -557,6 +579,8 @@ def _telegram_factory_from_env(
                 store=store,
                 user_registry=user_registry,
                 model_selector=model_selector,
+                transcriber=transcriber,
+                synthesizer=synthesizer,
             )
         ]
 

@@ -15,7 +15,7 @@
 - **Cost & Context Aware**: Includes daily token budget enforcement, auto-concise mode, and SHA-256 loop detection to prevent runaway LLM costs.
 - **Background Tasks**: Can wake up on a cron schedule (`HEARTBEAT.md`) to do background work without wasting LLM tokens while idle.
 - **Full Observability**: OpenTelemetry tracing built-in (via Arize Phoenix or Langfuse) so you can see exactly what the LLM is thinking and doing under the hood.
-- **Multi-Interface**: Chat via a beautiful Web UI or on the go via Telegram.
+- **Multi-Interface**: Chat via a beautiful Web UI or on the go via Telegram — including voice notes (Whisper STT + optional Piper TTS).
 - **Multi-Provider LLM**: Supports Anthropic, OpenAI, Gemini, OpenRouter, Groq, Moonshot, and Qwen.
 - **Lightweight**: Easily runs on a Raspberry Pi 5.
 
@@ -76,6 +76,38 @@ Prefer chatting on Telegram? Set up a private bot:
 
 4. Restart the `pishkar.server`.
 *Security Note: Only your specific `TELEGRAM_OWNER_ID` can interact with the bot. All other users are silently ignored. Type `/new` in the chat to start a fresh session.*
+
+### 4. Voice notes (optional)
+
+Pishkar can transcribe Telegram voice notes (STT via Groq Whisper, free tier) and optionally reply with synthesized voice (TTS via local Piper).
+
+**Speech-to-text** — set `GROQ_API_KEY` in `.env`, then enable:
+
+```env
+PISHKAR_VOICE_ENABLED=1
+PISHKAR_STT_ENGINE=groq
+```
+
+That alone gets you "speak in Telegram, get a text reply." If the transcript is empty Pishkar will tell you instead of dispatching a turn.
+
+**Text-to-speech (optional)** — install [Piper](https://github.com/rhasspy/piper) and `ffmpeg`, then download a voice model:
+
+```bash
+mkdir -p ~/.pishkar/piper
+curl -L -o ~/.pishkar/piper/en_US-lessac-medium.onnx \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+curl -L -o ~/.pishkar/piper/en_US-lessac-medium.onnx.json \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+```
+
+Then in `.env`:
+
+```env
+PISHKAR_TTS_ENGINE=piper
+PISHKAR_PIPER_VOICE=/home/you/.pishkar/piper/en_US-lessac-medium.onnx
+```
+
+When TTS is configured, voice-in turns into voice-out (alongside the text reply). If `PISHKAR_TTS_ENGINE` is unset, Pishkar simply replies in text — a fine fallback.
 
 ---
 

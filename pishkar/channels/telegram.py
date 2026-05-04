@@ -45,6 +45,7 @@ from pishkar.gateway.gateway import Gateway
 from pishkar.gateway.user_registry import UserChannelRegistry
 from pishkar.runtime import ModelSelector, provider_for_model
 from pishkar.tools.approval_gate import ApprovalDecision
+from pishkar.voice import Synthesizer, Transcriber
 from pishkar.workspace.store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -69,12 +70,19 @@ class TelegramChannel:
         chat_id: int,
         send_message: SendMessage,
         session_id: str = "",
+        send_voice: SendMessage | None = None,
+        synthesizer: Synthesizer | None = None,
     ) -> None:
         self._chat_id = chat_id
         self._send_message = send_message
+        self._send_voice = send_voice
+        self._synthesizer = synthesizer
         self._session_id = session_id
         self._buffer: list[str] = []
         self._closed = False
+        # Set by the runner before submitting an inbound voice message;
+        # consumed on TurnEnd to mirror the modality back to the user.
+        self.voice_reply = False
 
     @property
     def session_id(self) -> str:
@@ -109,12 +117,20 @@ class TelegramChannel:
         if isinstance(event, TurnEnd):
             text = "".join(self._buffer).strip()
             self._buffer.clear()
+            voice_reply = self.voice_reply
+            self.voice_reply = False
             if event.stop_reason == "error":
                 await self._safe_send(text="⚠️ Something went wrong on that turn.")
             elif text:
                 # Telegram caps message length at 4096 chars.
                 for chunk in _chunk_text(text, 4000):
                     await self._safe_send(text=chunk)
+                if (
+                    voice_reply
+                    and self._synthesizer is not None
+                    and self._send_voice is not None
+                ):
+                    await self._send_voice_reply(text)
             return
         if isinstance(event, ApprovalRequest):
             keyboard = InlineKeyboardMarkup([[
@@ -155,6 +171,20 @@ class TelegramChannel:
             await self._send_message(chat_id=self._chat_id, **kwargs)
         except Exception:
             logger.exception("telegram send failed for chat %s", self._chat_id)
+
+    async def _send_voice_reply(self, text: str) -> None:
+        """Synthesize `text` and post it as a Telegram voice note. Errors
+        here must not block the text reply that already went out."""
+        assert self._synthesizer is not None and self._send_voice is not None
+        try:
+            audio = await self._synthesizer.synthesize(text)
+        except Exception:
+            logger.exception("voice synthesis failed for chat %s", self._chat_id)
+            return
+        try:
+            await self._send_voice(chat_id=self._chat_id, voice=audio)
+        except Exception:
+            logger.exception("telegram send_voice failed for chat %s", self._chat_id)
 
 
 def _chunk_text(text: str, size: int) -> list[str]:
@@ -242,6 +272,8 @@ class TelegramBotRunner:
         store: SessionStore | None = None,
         user_registry: UserChannelRegistry | None = None,
         model_selector: ModelSelector | None = None,
+        transcriber: Transcriber | None = None,
+        synthesizer: Synthesizer | None = None,
     ) -> None:
         self._token = token
         self._owner_id = owner_id
@@ -251,6 +283,8 @@ class TelegramBotRunner:
         self._store = store
         self._user_registry = user_registry
         self._model_selector = model_selector
+        self._transcriber = transcriber
+        self._synthesizer = synthesizer
         self._app: Application | None = None
         self._sessions: dict[int, str] = {}
         self._channels: dict[int, TelegramChannel] = {}
@@ -270,6 +304,8 @@ class TelegramBotRunner:
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
         )
+        if self._transcriber is not None:
+            app.add_handler(MessageHandler(filters.VOICE, self._on_voice))
         await app.initialize()
         await app.start()
         if app.updater is None:
@@ -435,6 +471,48 @@ class TelegramBotRunner:
             session_id=session_id,
             channel="telegram",
             content=update.message.text,
+        )
+        await self._gateway.submit(msg)
+
+    async def _on_voice(
+        self, update: Update, _: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_owner(update):
+            return
+        if (
+            self._transcriber is None
+            or update.message is None
+            or update.message.voice is None
+            or self._app is None
+        ):
+            return
+        chat_id = update.message.chat_id
+        try:
+            tg_file = await self._app.bot.get_file(update.message.voice.file_id)
+            audio = bytes(await tg_file.download_as_bytearray())
+            text = await self._transcriber.transcribe(
+                audio, mime=update.message.voice.mime_type or "audio/ogg"
+            )
+        except Exception:
+            logger.exception("voice transcription failed for chat %s", chat_id)
+            await update.message.reply_text(
+                "⚠️ Couldn't transcribe that voice note."
+            )
+            return
+        if not text:
+            await update.message.reply_text(
+                "⚠️ Empty transcript — try again."
+            )
+            return
+        session_id = await self._ensure_channel(chat_id)
+        channel = self._channels.get(chat_id)
+        if channel is not None:
+            channel.voice_reply = self._synthesizer is not None
+        msg = InboundMessage(
+            user_id=self._user_id,
+            session_id=session_id,
+            channel="telegram",
+            content=text,
         )
         await self._gateway.submit(msg)
 
@@ -664,6 +742,8 @@ class TelegramBotRunner:
             chat_id=chat_id,
             send_message=self._app.bot.send_message,
             session_id=sid,
+            send_voice=self._app.bot.send_voice if self._synthesizer else None,
+            synthesizer=self._synthesizer,
         )
         self._sessions[chat_id] = sid
         self._channels[chat_id] = channel

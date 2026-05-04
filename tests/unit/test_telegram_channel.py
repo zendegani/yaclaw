@@ -503,3 +503,186 @@ async def test_on_usage_renders_today_week_alltime(
         assert "claude-opus" in text
     finally:
         await store.close()
+
+
+# --- voice notes ----------------------------------------------------------
+
+
+class _StubTranscriber:
+    def __init__(self, text: str = "hi from voice") -> None:
+        self.text = text
+        self.calls: list[bytes] = []
+
+    async def transcribe(self, audio: bytes, *, mime: str = "audio/ogg") -> str:
+        self.calls.append(audio)
+        return self.text
+
+
+class _StubSynth:
+    def __init__(self, audio: bytes = b"OGGOUT") -> None:
+        self.audio = audio
+        self.calls: list[str] = []
+
+    async def synthesize(self, text: str) -> bytes:
+        self.calls.append(text)
+        return self.audio
+
+
+async def test_channel_sends_voice_when_flag_set() -> None:
+    send = AsyncMock()
+    send_voice = AsyncMock()
+    synth = _StubSynth()
+    chan = TelegramChannel(
+        chat_id=42,
+        send_message=send,
+        send_voice=send_voice,
+        synthesizer=synth,
+    )
+    chan.voice_reply = True
+    turn = str(uuid4())
+    sid = "s1"
+    await _drain(chan, [
+        ContentBlockDelta(
+            turn_id=turn, session_id=sid, index=0, delta=TextDelta(text="hello")
+        ),
+        TurnEnd(turn_id=turn, session_id=sid, stop_reason="end_turn"),
+    ])
+    send.assert_awaited_once()
+    send_voice.assert_awaited_once()
+    assert send_voice.await_args.kwargs == {"chat_id": 42, "voice": b"OGGOUT"}
+    assert synth.calls == ["hello"]
+
+
+async def test_channel_skips_voice_when_flag_not_set() -> None:
+    send = AsyncMock()
+    send_voice = AsyncMock()
+    synth = _StubSynth()
+    chan = TelegramChannel(
+        chat_id=1,
+        send_message=send,
+        send_voice=send_voice,
+        synthesizer=synth,
+    )
+    turn = str(uuid4())
+    sid = "s1"
+    await _drain(chan, [
+        ContentBlockDelta(
+            turn_id=turn, session_id=sid, index=0, delta=TextDelta(text="hello")
+        ),
+        TurnEnd(turn_id=turn, session_id=sid, stop_reason="end_turn"),
+    ])
+    send.assert_awaited_once()
+    send_voice.assert_not_awaited()
+
+
+async def test_channel_voice_flag_resets_after_turn() -> None:
+    send = AsyncMock()
+    send_voice = AsyncMock()
+    chan = TelegramChannel(
+        chat_id=1,
+        send_message=send,
+        send_voice=send_voice,
+        synthesizer=_StubSynth(),
+    )
+    chan.voice_reply = True
+    await chan.send_event(
+        ContentBlockDelta(
+            turn_id="t", session_id="s", index=0, delta=TextDelta(text="x")
+        )
+    )
+    await chan.send_event(TurnEnd(turn_id="t", session_id="s", stop_reason="end_turn"))
+    assert chan.voice_reply is False
+
+
+async def test_channel_voice_synthesis_failure_does_not_block_text() -> None:
+    send = AsyncMock()
+    send_voice = AsyncMock()
+
+    class _BoomSynth:
+        async def synthesize(self, text: str) -> bytes:
+            raise RuntimeError("piper down")
+
+    chan = TelegramChannel(
+        chat_id=1,
+        send_message=send,
+        send_voice=send_voice,
+        synthesizer=_BoomSynth(),
+    )
+    chan.voice_reply = True
+    await chan.send_event(
+        ContentBlockDelta(
+            turn_id="t", session_id="s", index=0, delta=TextDelta(text="hi")
+        )
+    )
+    await chan.send_event(TurnEnd(turn_id="t", session_id="s", stop_reason="end_turn"))
+    send.assert_awaited_once()
+    send_voice.assert_not_awaited()
+
+
+async def test_runner_voice_handler_dispatches_transcribed_text(
+    gateway: Gateway,
+) -> None:
+    transcriber = _StubTranscriber(text="what is the weather")
+    runner = _make_runner(gateway)
+    runner._transcriber = transcriber  # type: ignore[attr-defined]
+    runner._synthesizer = _StubSynth()  # type: ignore[attr-defined]
+
+    # Stub bot.get_file -> object with download_as_bytearray()
+    fake_file = MagicMock()
+    fake_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
+    runner._app.bot.get_file = AsyncMock(return_value=fake_file)  # type: ignore[attr-defined]
+
+    submitted: list[InboundMessage] = []
+    original_submit = gateway.submit
+
+    async def capturing_submit(msg: InboundMessage) -> None:
+        submitted.append(msg)
+        await original_submit(msg)
+
+    gateway.submit = capturing_submit  # type: ignore[assignment]
+
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.voice.file_id = "voice-1"
+    update.message.voice.mime_type = "audio/ogg"
+    update.message.reply_text = AsyncMock()
+    await runner._on_voice(update, MagicMock())
+
+    assert transcriber.calls == [b"ogg"]
+    assert len(submitted) == 1
+    assert submitted[0].content == "what is the weather"
+    chan = runner._channels[1]
+    # Flag set so the eventual TurnEnd produces a voice reply.
+    assert chan.voice_reply is True
+
+
+async def test_runner_voice_handler_warns_on_empty_transcript(
+    gateway: Gateway,
+) -> None:
+    runner = _make_runner(gateway)
+    runner._transcriber = _StubTranscriber(text="")  # type: ignore[attr-defined]
+    fake_file = MagicMock()
+    fake_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
+    runner._app.bot.get_file = AsyncMock(return_value=fake_file)  # type: ignore[attr-defined]
+
+    update = MagicMock()
+    update.effective_user.id = 100
+    update.message.chat_id = 1
+    update.message.voice.file_id = "voice-1"
+    update.message.voice.mime_type = "audio/ogg"
+    update.message.reply_text = AsyncMock()
+    await runner._on_voice(update, MagicMock())
+    update.message.reply_text.assert_awaited_once()
+    assert "Empty" in update.message.reply_text.await_args.args[0]
+
+
+async def test_runner_voice_handler_ignores_non_owner(
+    gateway: Gateway,
+) -> None:
+    runner = _make_runner(gateway)
+    runner._transcriber = _StubTranscriber()  # type: ignore[attr-defined]
+    update = MagicMock()
+    update.effective_user.id = 999
+    await runner._on_voice(update, MagicMock())
+    assert runner._sessions == {}
