@@ -212,14 +212,32 @@ def test_voice_dispatches_transcript_through_websocket(tmp_path: Path) -> None:
             resp = client.post(
                 "/voice/ali/s1",
                 files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
+                data={"message_id": "msg-123"},
             )
             assert resp.status_code == 200
-            assert resp.json() == {"transcript": "ping"}
+            assert resp.json() == {"transcript": "ping", "message_id": "msg-123"}
             events = _drain_until(ws, "turn_end")
     types = [e["type"] for e in events]
     assert types == ["user_message", "turn_start", "content_block_delta", "turn_end"]
     assert events[0]["content"] == "ping"
+    # Server must echo the client-provided id so the UI can dedupe.
+    assert events[0]["message_id"] == "msg-123"
     assert transcriber.calls == [(b"oggbytes", "audio/webm")]
+
+
+def test_voice_mints_id_when_omitted(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "s.db")
+    transcriber = _StubTranscriber(text="ping")
+    app = create_app(store=store, handler=_echo, transcriber=transcriber)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/voice/ali/s1",
+            files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["transcript"] == "ping"
+    assert body["message_id"] == ""
 
 
 def test_voice_400_on_empty_transcript(tmp_path: Path) -> None:

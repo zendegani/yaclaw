@@ -28,13 +28,16 @@ export function ChatPage() {
   const recorderRef = useRef<RecorderController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const spokenRef = useRef<Set<string>>(new Set());
+  // Set when the user sends voice, so the next assistant turn is spoken
+  // even if "Speak replies" is off — mirrors Telegram's voice-in/voice-out
+  // modality. Cleared after the first turn it triggers.
+  const speakNextRef = useRef(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [items]);
 
   useEffect(() => {
-    if (!getSpeakReplies()) return;
     const last = items[items.length - 1];
     if (
       !last
@@ -45,7 +48,10 @@ export function ChatPage() {
       return;
     }
     if (spokenRef.current.has(last.turn.turn_id)) return;
+    const oneShot = speakNextRef.current;
+    if (!getSpeakReplies() && !oneShot) return;
     spokenRef.current.add(last.turn.turn_id);
+    speakNextRef.current = false;
     speakText(last.turn.text);
   }, [items]);
 
@@ -70,6 +76,7 @@ export function ChatPage() {
       setRecording(false);
       if (!ctrl) return;
       setVoiceBusy(true);
+      const messageId = crypto.randomUUID();
       try {
         const blob = await ctrl.stop();
         if (blob.size === 0) {
@@ -80,11 +87,14 @@ export function ChatPage() {
           getUserId(),
           getSessionId(),
           blob,
+          messageId,
         );
-        // Server already echoes the user_message event back through the
-        // WebSocket, so the chat list will show the transcript shortly —
-        // but render it locally for instant feedback.
-        appendUserMessage(transcript);
+        // Render the transcript optimistically. The server echoes a
+        // user_message with the same message_id, which the store dedupes.
+        appendUserMessage(transcript, messageId);
+        // Mirror modality: the next assistant turn gets spoken aloud
+        // regardless of the "Speak replies" toggle, then resets.
+        speakNextRef.current = true;
       } catch (err) {
         setVoiceError(err instanceof Error ? err.message : "Voice upload failed.");
       } finally {

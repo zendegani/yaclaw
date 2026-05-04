@@ -60,9 +60,11 @@ export async function uploadVoice(
   userId: string,
   sessionId: string,
   blob: Blob,
-): Promise<{ transcript: string }> {
+  messageId: string,
+): Promise<{ transcript: string; message_id: string }> {
   const form = new FormData();
   form.append("audio", blob, "voice.webm");
+  form.append("message_id", messageId);
   const res = await fetch(`/voice/${userId}/${sessionId}`, {
     method: "POST",
     body: form,

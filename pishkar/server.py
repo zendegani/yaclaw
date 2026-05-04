@@ -26,7 +26,16 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from starlette.websockets import WebSocketState
 
 from pishkar.channels.ws import WebSocketChannel
@@ -158,6 +167,7 @@ def create_app(
         user_id: str,
         session_id: str,
         audio: UploadFile = File(...),  # noqa: B008  # FastAPI idiom
+        message_id: str | None = Form(default=None),
     ) -> dict[str, str]:
         """Browser-side voice input. The Web UI captures audio via
         MediaRecorder, POSTs the blob here, and we transcribe it through
@@ -183,15 +193,16 @@ def create_app(
             raise HTTPException(
                 status_code=400, detail="Empty transcript."
             )
-        await gateway.submit(
-            InboundMessage(
-                user_id=user_id,
-                session_id=session_id,
-                channel="web",
-                content=text,
-            )
-        )
-        return {"transcript": text}
+        kwargs: dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "channel": "web",
+            "content": text,
+        }
+        if message_id:
+            kwargs["message_id"] = message_id
+        await gateway.submit(InboundMessage(**kwargs))
+        return {"transcript": text, "message_id": message_id or ""}
 
     @app.post("/sessions/new/{user_id}")
     async def _new_session(user_id: str, source: str = "web") -> dict[str, str]:
