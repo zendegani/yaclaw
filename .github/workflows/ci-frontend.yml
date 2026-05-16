@@ -11,6 +11,11 @@ on:
       - "ui/**"
       - ".github/workflows/ci-frontend.yml"
 
+# Least-privilege default — only checkout/read code; no write access to
+# issues, PRs, packages, or the repo itself.
+permissions:
+  contents: read
+
 # Cancel in-flight runs for the same ref so a quick second push doesn't
 # burn minutes finishing an obsolete check. github.ref is the canonical
 # safe value to key concurrency on — not user input.
