@@ -118,14 +118,14 @@ def build_router_completion(
 
     Imported lazily so `litellm` is only required when the real provider
     is wired up (not for unit tests)."""
-    from litellm import Router  # type: ignore[import-not-found]
+    from litellm import Router  # type: ignore[attr-defined]
 
     router = Router(
         model_list=model_list,
         fallbacks=fallbacks or [],
         routing_strategy=cast(Any, routing_strategy),
     )
-    return router.acompletion  # type: ignore[no-any-return]
+    return cast(CompletionFunc, router.acompletion)
 
 
 __all__ = ["LiteLLMProvider", "build_router_completion"]

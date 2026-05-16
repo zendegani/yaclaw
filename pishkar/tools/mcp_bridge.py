@@ -34,6 +34,7 @@ class McpToolInfo(BaseModel):
 class McpClient(Protocol):
     server_name: str
 
+    async def connect(self) -> None: ...
     async def list_tools(self) -> list[McpToolInfo]: ...
     async def call_tool(self, name: str, args: dict[str, Any]) -> str: ...
     async def close(self) -> None: ...
@@ -149,8 +150,10 @@ class HttpStreamMcpClient:
     async def connect(self) -> None:
         from contextlib import AsyncExitStack
 
-        from mcp import ClientSession  # type: ignore[import-not-found]
-        from mcp.client.streamable_http import streamablehttp_client  # type: ignore[import-not-found]
+        from mcp import ClientSession
+        from mcp.client.streamable_http import (  # type: ignore[import-not-found]
+            streamablehttp_client,
+        )
 
         self._stack = AsyncExitStack()
         read, write, _ = await self._stack.enter_async_context(

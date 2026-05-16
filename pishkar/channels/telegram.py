@@ -94,7 +94,7 @@ class TelegramChannel:
 
     async def inbound(self) -> AsyncIterator[InboundMessage]:
         if False:  # pragma: no cover — keeps the signature an async-gen
-            yield  # type: ignore[unreachable]
+            yield
         return
 
     async def send_event(self, event: Event) -> None:
@@ -286,7 +286,7 @@ class TelegramBotRunner:
         self._model_selector = model_selector
         self._transcriber = transcriber
         self._synthesizer = synthesizer
-        self._app: Application | None = None
+        self._app: Application[Any, Any, Any, Any, Any, Any] | None = None
         self._sessions: dict[int, str] = {}
         self._channels: dict[int, TelegramChannel] = {}
         self._chat_provider: dict[int, str] = {}
@@ -449,8 +449,9 @@ class TelegramBotRunner:
             return await self._store.latest_session_for_user(self._user_id)
         rows = await self._store.recent_sessions_for_user(self._user_id, limit=50)
         for r in rows:
-            if r["session_id"].startswith(token):
-                return r["session_id"]
+            sid: str = r["session_id"]
+            if sid.startswith(token):
+                return sid
         return None
 
     async def _mint_session(self) -> str:

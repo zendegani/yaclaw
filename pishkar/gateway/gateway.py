@@ -23,13 +23,13 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from pishkar.channels.base import Channel
 from pishkar.core.events import Event
 from pishkar.core.messages import InboundMessage
 from pishkar.gateway.hooks import HookManager
 from pishkar.workspace.store import SessionStore
+
+logger = logging.getLogger(__name__)
 
 Handler = Callable[[InboundMessage], AsyncIterator[Event]]
 
@@ -89,7 +89,7 @@ class Gateway:
     async def stop(self) -> None:
         self._stopped = True
         for q in self._session_queues.values():
-            await q.put(_SHUTDOWN)  # type: ignore[arg-type]
+            await q.put(_SHUTDOWN)
         workers = list(self._session_workers.values())
         pumps = list(self._pump_tasks)
         for t in workers + pumps:
@@ -119,7 +119,7 @@ class Gateway:
     async def _worker(self, q: asyncio.Queue[InboundMessage]) -> None:
         while True:
             msg = await q.get()
-            if msg is _SHUTDOWN:  # type: ignore[comparison-overlap]
+            if msg is _SHUTDOWN:
                 return
             try:
                 await self._dispatch(msg)

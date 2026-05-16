@@ -19,6 +19,9 @@ class FakeMcpClient:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.closed = False
 
+    async def connect(self) -> None:
+        pass
+
     async def list_tools(self) -> list[McpToolInfo]:
         return self._tools
 

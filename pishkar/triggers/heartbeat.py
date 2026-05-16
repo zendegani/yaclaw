@@ -73,7 +73,7 @@ class HeartbeatTrigger:
                 await asyncio.wait_for(
                     self._stopped.wait(), timeout=self._tick_interval
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def stop(self) -> None:

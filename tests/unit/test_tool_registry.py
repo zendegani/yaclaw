@@ -94,9 +94,11 @@ async def test_registry_call_validates_and_dispatches() -> None:
 
 
 async def test_registry_call_rejects_bad_args() -> None:
+    from pydantic import ValidationError
+
     reg = ToolRegistry()
     reg.register(add)
-    with pytest.raises(Exception):  # pydantic ValidationError
+    with pytest.raises(ValidationError):
         await reg.call("add", {"a": "not-an-int"})
 
 

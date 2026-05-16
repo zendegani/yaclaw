@@ -48,10 +48,9 @@ def _drain_until(ws, stop_type: str, limit: int = 20) -> list[dict]:
 
 
 def test_websocket_round_trip(app) -> None:
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws/ali/s1") as ws:
-            ws.send_text(json.dumps({"content": "hello"}))
-            events = _drain_until(ws, "turn_end")
+    with TestClient(app) as client, client.websocket_connect("/ws/ali/s1") as ws:
+        ws.send_text(json.dumps({"content": "hello"}))
+        events = _drain_until(ws, "turn_end")
 
     types = [e["type"] for e in events]
     assert types == ["user_message", "turn_start", "content_block_delta", "turn_end"]
@@ -126,16 +125,15 @@ def test_handler_exception_yields_turn_end_error_and_keeps_worker_alive(
 
     store = SessionStore(tmp_path / "sessions.db")
     app = create_app(store=store, handler=flaky)
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws/ali/s1") as ws:
-            ws.send_text(json.dumps({"content": "boom"}))
-            first = _drain_until(ws, "turn_end")
-            assert first[-1]["stop_reason"] == "error"
+    with TestClient(app) as client, client.websocket_connect("/ws/ali/s1") as ws:
+        ws.send_text(json.dumps({"content": "boom"}))
+        first = _drain_until(ws, "turn_end")
+        assert first[-1]["stop_reason"] == "error"
 
-            # Worker is still alive — second message gets a normal turn.
-            ws.send_text(json.dumps({"content": "again"}))
-            second = _drain_until(ws, "turn_end")
-            assert second[-1]["stop_reason"] == "end_turn"
+        # Worker is still alive — second message gets a normal turn.
+        ws.send_text(json.dumps({"content": "again"}))
+        second = _drain_until(ws, "turn_end")
+        assert second[-1]["stop_reason"] == "end_turn"
 
 
 async def test_replay_returns_false_on_client_disconnect(tmp_path: Path) -> None:
@@ -147,7 +145,7 @@ async def test_replay_returns_false_on_client_disconnect(tmp_path: Path) -> None
     await store.open()
     try:
         # Two events to replay; the fake socket dies on the first send.
-        for i, event_id in enumerate(("e1", "e2")):
+        for event_id in ("e1", "e2"):
             await store.append_event(
                 event_id=event_id,
                 type="turn_end",
@@ -172,11 +170,10 @@ async def test_replay_returns_false_on_client_disconnect(tmp_path: Path) -> None
 
 
 def test_invalid_inbound_json_is_ignored(app) -> None:
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws/ali/s1") as ws:
-            ws.send_text("not json at all")
-            ws.send_text(json.dumps({"content": "real"}))
-            events = _drain_until(ws, "turn_end")
+    with TestClient(app) as client, client.websocket_connect("/ws/ali/s1") as ws:
+        ws.send_text("not json at all")
+        ws.send_text(json.dumps({"content": "real"}))
+        events = _drain_until(ws, "turn_end")
     assert any("echo:real" in json.dumps(e) for e in events)
 
 
@@ -207,16 +204,15 @@ def test_voice_dispatches_transcript_through_websocket(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "s.db")
     transcriber = _StubTranscriber(text="ping")
     app = create_app(store=store, handler=_echo, transcriber=transcriber)
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws/ali/s1") as ws:
-            resp = client.post(
-                "/voice/ali/s1",
-                files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
-                data={"message_id": "msg-123"},
-            )
-            assert resp.status_code == 200
-            assert resp.json() == {"transcript": "ping", "message_id": "msg-123"}
-            events = _drain_until(ws, "turn_end")
+    with TestClient(app) as client, client.websocket_connect("/ws/ali/s1") as ws:
+        resp = client.post(
+            "/voice/ali/s1",
+            files={"audio": ("a.webm", b"oggbytes", "audio/webm")},
+            data={"message_id": "msg-123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"transcript": "ping", "message_id": "msg-123"}
+        events = _drain_until(ws, "turn_end")
     types = [e["type"] for e in events]
     assert types == ["user_message", "turn_start", "content_block_delta", "turn_end"]
     assert events[0]["content"] == "ping"

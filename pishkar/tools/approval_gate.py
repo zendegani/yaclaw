@@ -12,13 +12,13 @@ Decisions are written to `governance_decisions` via the optional
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pishkar.workspace.store import SessionStore
 
 
-class ApprovalDecision(str, Enum):
+class ApprovalDecision(StrEnum):
     ALLOW_ONCE = "allow_once"
     ALLOW_SESSION = "allow_session"
     DENY = "deny"

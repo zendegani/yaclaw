@@ -14,7 +14,8 @@ import json as _json
 import os
 import re
 import urllib.parse
-from typing import Any, Literal
+from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from pishkar.tools.http import http
 from pishkar.tools.registry import tool
@@ -156,7 +157,8 @@ async def _duckduckgo(query: str, max_results: int) -> str:
     return "\n".join(lines)
 
 
-_ENGINES: dict[str, Any] = {
+_EngineFunc = Callable[[str, int], Awaitable[str]]
+_ENGINES: dict[str, _EngineFunc] = {
     "tavily": _tavily,
     "brave": _brave,
     "duckduckgo": _duckduckgo,

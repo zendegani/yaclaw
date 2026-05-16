@@ -13,7 +13,7 @@ can be inserted directly between provider chunks and tool dispatches.
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pishkar.core.compaction import compact
@@ -56,9 +56,10 @@ def _safe_parse_json(text: str) -> dict[str, Any]:
     if not text:
         return {}
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
         return {"_raw": text}
+    return parsed if isinstance(parsed, dict) else {"_raw": text}
 
 
 class _ToolCallBuilder:
@@ -80,7 +81,10 @@ class _ToolCallBuilder:
         return _safe_parse_json(self.args_json)
 
 
-def _normalize_stop_reason(raw: str | None, *, has_tools: bool) -> str | None:
+StopReason = Literal["end_turn", "tool_use", "max_tokens", "stop_sequence"]
+
+
+def _normalize_stop_reason(raw: str | None, *, has_tools: bool) -> StopReason | None:
     if raw is None:
         return "tool_use" if has_tools else "end_turn"
     if raw in {"tool_calls", "tool_use"}:
