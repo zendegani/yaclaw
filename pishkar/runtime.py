@@ -22,6 +22,7 @@ from pishkar.gateway.gateway import Handler
 from pishkar.gateway.hooks import HookManager
 from pishkar.providers.base import ModelProvider
 from pishkar.providers.litellm_provider import LiteLLMProvider, build_router_completion
+from pishkar.providers.minimax import is_minimax_model, minimax_acompletion
 from pishkar.tools.approval_gate import ApprovalGate
 from pishkar.tools.bash import bash
 from pishkar.tools.fs import read_file, write_file
@@ -236,17 +237,45 @@ def build_default_provider() -> tuple[ModelProvider, str]:
     `discover_available_models()` plus the default, so `/model` can
     switch between them at runtime without rebuilding the Router.
     litellm reads the key envs itself.
+
+    MiniMax is handled by a thin sibling client because its chat endpoint
+    is `/v1/text/chatcompletion_v2?GroupId=…` — a non-standard path that
+    LiteLLM's `openai/` shim can't reach. A dispatcher in front of the
+    Router intercepts `minimax/*` models; everything else flows through
+    LiteLLM unchanged.
     """
     model = os.environ.get("PISHKAR_MODEL") or _default_model_for_env()
     candidates: set[str] = {model}
     for models in discover_available_models().values():
         candidates.update(models)
+
+    non_minimax = sorted(m for m in candidates if not is_minimax_model(m))
     model_list: list[dict[str, Any]] = [
         {"model_name": m, "litellm_params": {"model": _litellm_name(m)}}
-        for m in sorted(candidates)
+        for m in non_minimax
     ]
-    completion = build_router_completion(model_list)
+    router_completion = build_router_completion(model_list) if model_list else None
+    completion = _build_completion_dispatcher(router_completion)
     return LiteLLMProvider(completion), model
+
+
+def _build_completion_dispatcher(
+    router_completion: Any | None,
+) -> Any:
+    """Route `minimax/*` to the MiniMax adapter; pass everything else
+    through to the LiteLLM Router unchanged."""
+
+    async def dispatch(*, model: str, **kwargs: Any) -> Any:
+        if is_minimax_model(model):
+            return await minimax_acompletion(model=model, **kwargs)
+        if router_completion is None:
+            raise RuntimeError(
+                f"No LiteLLM Router is configured for non-MiniMax model {model!r}; "
+                "set an API key for the matching provider."
+            )
+        return await router_completion(model=model, **kwargs)
+
+    return dispatch
 
 
 # Map known API-key env vars to (default model, litellm prefix).
@@ -260,7 +289,15 @@ PROVIDER_KEYS: tuple[tuple[str, str, str], ...] = (
     ("DASHSCOPE_API_KEY", "dashscope/qwen-turbo", "dashscope"),
     ("GEMINI_API_KEY", "gemini-3-flash-preview", "gemini"),
     ("GOOGLE_API_KEY", "gemini-3-flash-preview", "gemini"),
+    ("MINIMAX_API_KEY", "minimax/MiniMax-M2.7", "minimax"),
 )
+
+# Providers that need a second env var beyond their API key to be usable.
+# Used by `discover_available_models` and `_default_model_for_env` so a
+# half-configured provider doesn't get listed (and then 500 at call time).
+EXTRA_ENV_REQUIRED: dict[str, tuple[str, ...]] = {
+    "minimax": ("MINIMAX_GROUP_ID",),
+}
 
 # Curated catalog of swappable models per provider, surfaced by the
 # Telegram `/model` command. Entries are in litellm naming so they go
@@ -295,6 +332,10 @@ KNOWN_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
         "dashscope/qwen-plus",
         "dashscope/qwen-max",
     ),
+    "minimax": (
+        "minimax/MiniMax-M2.7",
+        "minimax/MiniMax-M2",
+    ),
 }
 
 
@@ -306,6 +347,8 @@ def discover_available_models() -> dict[str, list[str]]:
     available: dict[str, list[str]] = {}
     for env_key, _, provider in PROVIDER_KEYS:
         if not os.environ.get(env_key):
+            continue
+        if not all(os.environ.get(e) for e in EXTRA_ENV_REQUIRED.get(provider, ())):
             continue
         models = KNOWN_MODELS_BY_PROVIDER.get(provider)
         if not models:
@@ -377,14 +420,18 @@ _BARE_PREFIX_TO_PROVIDER: tuple[tuple[str, str], ...] = (
 )
 
 KNOWN_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "openai", "gemini", "openrouter", "groq", "moonshot", "dashscope"}
+    {"anthropic", "openai", "gemini", "openrouter", "groq", "moonshot",
+     "dashscope", "minimax"}
 )
 
 
 def _default_model_for_env() -> str:
-    for key, default_model, _ in PROVIDER_KEYS:
-        if os.environ.get(key):
-            return default_model
+    for key, default_model, provider in PROVIDER_KEYS:
+        if not os.environ.get(key):
+            continue
+        if not all(os.environ.get(e) for e in EXTRA_ENV_REQUIRED.get(provider, ())):
+            continue
+        return default_model
     return "claude-opus-4-7"
 
 
