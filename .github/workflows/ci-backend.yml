@@ -1,15 +1,29 @@
-name: CI
+name: Backend CI
 
 on:
   push:
     branches: [main]
+    paths:
+      - "pishkar/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/ci-backend.yml"
   pull_request:
+    paths:
+      - "pishkar/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/ci-backend.yml"
 
 # Cancel in-flight runs for the same ref so a quick second push doesn't
 # burn minutes finishing an obsolete check. github.ref is the canonical
 # safe value to key concurrency on — not user input.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-backend-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
