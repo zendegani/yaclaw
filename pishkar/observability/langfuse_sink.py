@@ -74,7 +74,11 @@ def build_langfuse_client(
     host: str = "http://localhost:3000",
 ) -> Any:
     """Lazy-import factory for `langfuse.Langfuse`."""
-    from langfuse import Langfuse  # type: ignore[import-not-found]
+    # No specific code: langfuse is an optional extra. When it's
+    # installed the error is `import-untyped` (no py.typed marker);
+    # when it's not installed the error is `import-not-found`. Plain
+    # `# type: ignore` covers both without going stale.
+    from langfuse import Langfuse  # type: ignore
 
     return Langfuse(public_key=public_key, secret_key=secret_key, host=host)
 
