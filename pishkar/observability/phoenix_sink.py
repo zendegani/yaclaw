@@ -160,7 +160,7 @@ def build_phoenix_tracer(
     project_name: str = "pishkar",
 ) -> Any:
     """Lazy-import factory for a Phoenix-configured OTel tracer."""
-    from phoenix.otel import register  # type: ignore[import-not-found]
+    from phoenix.otel import register
 
     tracer_provider = register(project_name=project_name, endpoint=endpoint)
     return tracer_provider.get_tracer("pishkar")
