@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs for the same ref so a quick second push doesn't
+# burn minutes finishing an obsolete check. github.ref is the canonical
+# safe value to key concurrency on — not user input.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv (with Python 3.14)
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # Lint and typecheck are informational while the existing
+      # codebase still has accumulated violations. Flip to required
+      # (drop `continue-on-error`) once the backlog is cleared.
+      - name: Ruff
+        run: uv run ruff check .
+        continue-on-error: true
+
+      - name: Mypy
+        run: uv run mypy pishkar
+        continue-on-error: true
+
+      - name: Pytest
+        run: uv run pytest -q
