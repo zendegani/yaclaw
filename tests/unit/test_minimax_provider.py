@@ -15,6 +15,7 @@ from pishkar.providers.minimax import (
 from pishkar.runtime import (
     EXTRA_ENV_REQUIRED,
     _build_completion_dispatcher,
+    _read_model_chain,
     discover_available_models,
 )
 
@@ -168,3 +169,115 @@ def test_discover_requires_group_id(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_extra_env_required_table_lists_minimax() -> None:
     """Guard against forgetting MINIMAX_GROUP_ID if PROVIDER_KEYS evolves."""
     assert "MINIMAX_GROUP_ID" in EXTRA_ENV_REQUIRED["minimax"]
+
+
+# --- Model fallback chain ----------------------------------------------------
+
+
+@pytest.fixture(autouse=False)
+def _clean_chain_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for k in ("PISHKAR_MODEL", "PISHKAR_MODEL_1", "PISHKAR_MODEL_2",
+              "PISHKAR_MODEL_3", "PISHKAR_MODEL_4"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_chain_single_pishkar_model(monkeypatch: pytest.MonkeyPatch,
+                                    _clean_chain_env: None) -> None:
+    monkeypatch.setenv("PISHKAR_MODEL", "anthropic/claude-opus-4-7")
+    assert _read_model_chain() == ["anthropic/claude-opus-4-7"]
+
+
+def test_chain_numbered_overrides_legacy(monkeypatch: pytest.MonkeyPatch,
+                                          _clean_chain_env: None) -> None:
+    monkeypatch.setenv("PISHKAR_MODEL", "legacy/model")
+    monkeypatch.setenv("PISHKAR_MODEL_1", "primary/model")
+    monkeypatch.setenv("PISHKAR_MODEL_2", "fallback/a")
+    monkeypatch.setenv("PISHKAR_MODEL_3", "fallback/b")
+    assert _read_model_chain() == ["primary/model", "fallback/a", "fallback/b"]
+
+
+def test_chain_stops_at_gap(monkeypatch: pytest.MonkeyPatch,
+                             _clean_chain_env: None) -> None:
+    monkeypatch.setenv("PISHKAR_MODEL_1", "a")
+    monkeypatch.setenv("PISHKAR_MODEL_2", "b")
+    # No _3, but _4 set — should NOT be picked up (gaps end the chain).
+    monkeypatch.setenv("PISHKAR_MODEL_4", "skipped")
+    assert _read_model_chain() == ["a", "b"]
+
+
+def test_chain_empty_when_no_env(_clean_chain_env: None) -> None:
+    assert _read_model_chain() == []
+
+
+async def test_fallback_skips_pre_stream_error() -> None:
+    """Auth failure on the primary should hop to the next chain entry."""
+    attempts: list[str] = []
+
+    async def router(*, model: str, **_: Any) -> Any:
+        attempts.append(model)
+        if model == "primary":
+            raise RuntimeError("401 Invalid API Key")
+
+        async def good_stream() -> Any:
+            yield {"choices": [{"delta": {"content": "ok"}, "index": 0}]}
+        return good_stream()
+
+    dispatch = _build_completion_dispatcher(
+        router, primary="primary", fallbacks=["fallback"]
+    )
+    stream = await dispatch(model="primary", messages=[])
+    chunks = [c async for c in stream]
+    assert attempts == ["primary", "fallback"]
+    assert chunks[0]["choices"][0]["delta"]["content"] == "ok"
+
+
+async def test_fallback_skips_mid_stream_before_first_chunk() -> None:
+    """Errors raised during the first __anext__ (e.g. Groq tool_use_failed)
+    should still hop to the next chain entry — that's the whole point."""
+    attempts: list[str] = []
+
+    async def router(*, model: str, **_: Any) -> Any:
+        attempts.append(model)
+
+        async def bad_stream() -> Any:
+            if model == "primary":
+                raise RuntimeError("tool_use_failed mid-stream")
+                yield  # unreachable
+            yield {"choices": [{"delta": {"content": "rescued"}, "index": 0}]}
+        return bad_stream()
+
+    dispatch = _build_completion_dispatcher(
+        router, primary="primary", fallbacks=["fallback"]
+    )
+    stream = await dispatch(model="primary", messages=[])
+    chunks = [c async for c in stream]
+    assert attempts == ["primary", "fallback"]
+    assert chunks[0]["choices"][0]["delta"]["content"] == "rescued"
+
+
+async def test_fallback_raises_last_when_all_fail() -> None:
+    async def router(*, model: str, **_: Any) -> Any:
+        raise RuntimeError(f"{model} failed")
+
+    dispatch = _build_completion_dispatcher(
+        router, primary="a", fallbacks=["b", "c"]
+    )
+    with pytest.raises(RuntimeError, match="c failed"):
+        await dispatch(model="a", messages=[])
+
+
+async def test_fallback_only_applies_when_model_is_primary() -> None:
+    """A `/model` switch to a non-primary should be a single shot, not
+    a chain."""
+    attempts: list[str] = []
+
+    async def router(*, model: str, **_: Any) -> Any:
+        attempts.append(model)
+        raise RuntimeError("nope")
+
+    dispatch = _build_completion_dispatcher(
+        router, primary="primary", fallbacks=["fallback"]
+    )
+    with pytest.raises(RuntimeError):
+        await dispatch(model="other/explicit-switch", messages=[])
+    assert attempts == ["other/explicit-switch"]

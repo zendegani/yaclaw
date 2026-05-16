@@ -14,6 +14,9 @@ _PROVIDER_KEYS = (
     "MINIMAX_API_KEY",
     "MINIMAX_GROUP_ID",
     "PISHKAR_MODEL",
+    "PISHKAR_MODEL_1",
+    "PISHKAR_MODEL_2",
+    "PISHKAR_MODEL_3",
 )
 
 
@@ -29,7 +32,7 @@ def clean_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
         ("ANTHROPIC_API_KEY", "claude-opus-4-7"),
         ("OPENAI_API_KEY", "gpt-4o-mini"),
         ("OPENROUTER_API_KEY", "openrouter/anthropic/claude-3.5-sonnet"),
-        ("GROQ_API_KEY", "groq/llama-3.3-70b-versatile"),
+        ("GROQ_API_KEY", "groq/openai/gpt-oss-120b"),
         ("MOONSHOT_API_KEY", "moonshot/moonshot-v1-8k"),
         ("DASHSCOPE_API_KEY", "dashscope/qwen-turbo"),
         ("GEMINI_API_KEY", "gemini-3-flash-preview"),
@@ -115,7 +118,7 @@ def test_discover_picks_only_providers_with_keys(
 
 def test_provider_for_model_reverse_lookup() -> None:
     assert provider_for_model("claude-opus-4-7") == "anthropic"
-    assert provider_for_model("groq/llama-3.3-70b-versatile") == "groq"
+    assert provider_for_model("groq/openai/gpt-oss-120b") == "groq"
     assert provider_for_model("not-a-real-model") is None
 
 

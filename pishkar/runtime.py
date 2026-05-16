@@ -9,6 +9,7 @@ That is good enough to try Pishkar end-to-end. Persisting/replaying history
 across restarts lives behind the `SessionStore` seam and lands later.
 """
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -35,6 +36,8 @@ from pishkar.tools.search import search
 from pishkar.tools.speak import speak
 from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
 from pishkar.workspace.store import SessionStore
+
+logger = logging.getLogger(__name__)
 
 # Tools that need user approval before each call. Read-only operations
 # stay off this list; sensitive ones (state-mutating, network, shell)
@@ -232,20 +235,26 @@ def _default_registry() -> ToolRegistry:
 def build_default_provider() -> tuple[ModelProvider, str]:
     """Construct the production LiteLLM router from environment.
 
-    Picks a default model based on which `*_API_KEY` is present (override
-    with `PISHKAR_MODEL`). Registers every model from
-    `discover_available_models()` plus the default, so `/model` can
-    switch between them at runtime without rebuilding the Router.
-    litellm reads the key envs itself.
+    The active model and fallback chain come from `PISHKAR_MODEL_1`,
+    `PISHKAR_MODEL_2`, … (`PISHKAR_MODEL` is accepted as an alias for
+    `_1`). If none are set, the first provider with a usable API key in
+    `PROVIDER_KEYS` order wins. Every catalog entry from
+    `discover_available_models()` is also registered with LiteLLM so
+    `/model` can switch to any of them at runtime without rebuilding.
 
     MiniMax is handled by a thin sibling client because its chat endpoint
     is `/v1/text/chatcompletion_v2?GroupId=…` — a non-standard path that
     LiteLLM's `openai/` shim can't reach. A dispatcher in front of the
     Router intercepts `minimax/*` models; everything else flows through
-    LiteLLM unchanged.
+    LiteLLM unchanged. The same dispatcher walks the fallback chain on
+    failure (auth errors, 429, mid-stream tool-call errors before the
+    first chunk), so a flaky primary doesn't sink the turn.
     """
-    model = os.environ.get("PISHKAR_MODEL") or _default_model_for_env()
-    candidates: set[str] = {model}
+    chain = _read_model_chain() or [_default_model_for_env()]
+    primary = chain[0]
+    fallbacks = chain[1:]
+
+    candidates: set[str] = set(chain)
     for models in discover_available_models().values():
         candidates.update(models)
 
@@ -255,27 +264,101 @@ def build_default_provider() -> tuple[ModelProvider, str]:
         for m in non_minimax
     ]
     router_completion = build_router_completion(model_list) if model_list else None
-    completion = _build_completion_dispatcher(router_completion)
-    return LiteLLMProvider(completion), model
+    completion = _build_completion_dispatcher(
+        router_completion, primary=primary, fallbacks=fallbacks
+    )
+    return LiteLLMProvider(completion), primary
+
+
+def _read_model_chain() -> list[str]:
+    """Parse `PISHKAR_MODEL` / `PISHKAR_MODEL_1..N` into an ordered chain.
+
+    `PISHKAR_MODEL` and `PISHKAR_MODEL_1` are synonyms (first non-empty
+    wins). The chain walks until the next index is missing — gaps end the
+    chain rather than being skipped, so a typo is loud, not silent.
+    """
+    chain: list[str] = []
+    first = os.environ.get("PISHKAR_MODEL_1") or os.environ.get("PISHKAR_MODEL")
+    if not first:
+        return chain
+    chain.append(first)
+    i = 2
+    while True:
+        nxt = os.environ.get(f"PISHKAR_MODEL_{i}")
+        if not nxt:
+            return chain
+        chain.append(nxt)
+        i += 1
 
 
 def _build_completion_dispatcher(
     router_completion: Any | None,
+    *,
+    primary: str | None = None,
+    fallbacks: list[str] | None = None,
 ) -> Any:
-    """Route `minimax/*` to the MiniMax adapter; pass everything else
-    through to the LiteLLM Router unchanged."""
+    """Route `minimax/*` to the MiniMax adapter, pass everything else to
+    the LiteLLM Router, and walk the fallback chain on failure.
 
-    async def dispatch(*, model: str, **kwargs: Any) -> Any:
-        if is_minimax_model(model):
-            return await minimax_acompletion(model=model, **kwargs)
+    Fallbacks only apply when the requested model is the configured
+    primary — an explicit `/model` switch should mean exactly that one
+    model, not a chain. Falling back covers two error classes: failures
+    raised before the stream is awaited (auth, model-not-found, 429
+    from the connect path) and failures raised on the first chunk
+    (Groq's `tool_use_failed`, malformed SSE). After at least one chunk
+    has been yielded the turn is committed and errors propagate."""
+    fallbacks = fallbacks or []
+
+    async def _call_one(candidate: str, **kwargs: Any) -> Any:
+        if is_minimax_model(candidate):
+            return await minimax_acompletion(model=candidate, **kwargs)
         if router_completion is None:
             raise RuntimeError(
-                f"No LiteLLM Router is configured for non-MiniMax model {model!r}; "
-                "set an API key for the matching provider."
+                f"No LiteLLM Router is configured for non-MiniMax model "
+                f"{candidate!r}; set an API key for the matching provider."
             )
-        return await router_completion(model=model, **kwargs)
+        return await router_completion(model=candidate, **kwargs)
+
+    async def dispatch(*, model: str, **kwargs: Any) -> Any:
+        chain = [model, *fallbacks] if model == primary and fallbacks else [model]
+        if len(chain) == 1:
+            return await _call_one(model, **kwargs)
+
+        last_err: BaseException | None = None
+        for candidate in chain:
+            try:
+                stream = await _call_one(candidate, **kwargs)
+                it = stream.__aiter__()
+                try:
+                    first = await it.__anext__()
+                except StopAsyncIteration:
+                    return _empty_stream()
+                return _replay(first, it)
+            except Exception as exc:  # noqa: BLE001 — we re-raise the last one
+                last_err = exc
+                logger.warning(
+                    "model %r failed (%s); trying next in chain",
+                    candidate, exc.__class__.__name__,
+                )
+                continue
+        assert last_err is not None
+        raise last_err
 
     return dispatch
+
+
+async def _replay(first: Any, iterator: Any) -> AsyncIterator[Any]:
+    yield first
+    async for chunk in iterator:
+        yield chunk
+
+
+async def _empty_stream() -> AsyncIterator[Any]:
+    # `if False: yield` keeps this an async generator without an
+    # unreachable-code warning. Hit when the underlying provider closes
+    # the stream with zero chunks — rare but possible.
+    if False:
+        yield None
 
 
 # Map known API-key env vars to (default model, litellm prefix).
@@ -284,7 +367,7 @@ PROVIDER_KEYS: tuple[tuple[str, str, str], ...] = (
     ("ANTHROPIC_API_KEY", "claude-opus-4-7", "anthropic"),
     ("OPENAI_API_KEY", "gpt-4o-mini", "openai"),
     ("OPENROUTER_API_KEY", "openrouter/anthropic/claude-3.5-sonnet", "openrouter"),
-    ("GROQ_API_KEY", "groq/llama-3.3-70b-versatile", "groq"),
+    ("GROQ_API_KEY", "groq/openai/gpt-oss-120b", "groq"),
     ("MOONSHOT_API_KEY", "moonshot/moonshot-v1-8k", "moonshot"),
     ("DASHSCOPE_API_KEY", "dashscope/qwen-turbo", "dashscope"),
     ("GEMINI_API_KEY", "gemini-3-flash-preview", "gemini"),
@@ -318,9 +401,10 @@ KNOWN_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
         "gemini-2.5-flash",
     ),
     "groq": (
-        "groq/llama-3.3-70b-versatile",
         "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-        "groq/meta-llama/llama-4-maverick-17b-128e-instruct",
+        "groq/openai/gpt-oss-120b",
+        "groq/openai/gpt-oss-20b",
+        "groq/qwen/qwen3-32b",
     ),
     "moonshot": (
         "moonshot/moonshot-v1-8k",
