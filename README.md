@@ -1,5 +1,7 @@
 # Pishkar
 
+[![Backend CI](https://github.com/zendegani/yaclaw/actions/workflows/ci-backend.yml/badge.svg?branch=main)](https://github.com/zendegani/yaclaw/actions/workflows/ci-backend.yml) [![Frontend CI](https://github.com/zendegani/yaclaw/actions/workflows/ci-frontend.yml/badge.svg?branch=main)](https://github.com/zendegani/yaclaw/actions/workflows/ci-frontend.yml) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
+
 ![Status Alpha](https://img.shields.io/badge/Status-Alpha-FF8C00) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white) ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white) ![npm 11.12+](https://img.shields.io/badge/npm-11.12%2B-CB3837?logo=npm&logoColor=white) ![TypeScript 5.6](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)
 
 **Pishkar** is a personal AI butler that runs locally and talks to you through a modern Web UI or Telegram. It maintains a persistent memory of your interactions by writing to plain markdown files locally, ensuring your data is always under your control.
