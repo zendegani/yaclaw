@@ -10,6 +10,7 @@ Same hash 3× in a row would be too aggressive — legitimate tools poll
 """
 
 from collections import deque
+from typing import Any
 
 from pishkar.workspace.store import args_hash
 
@@ -27,10 +28,10 @@ class LoopGuard:
         self._per_tool = per_tool_threshold or {}
         self._history: deque[tuple[str, str]] = deque(maxlen=window)
 
-    def record(self, tool_name: str, args: dict) -> None:
+    def record(self, tool_name: str, args: dict[str, Any]) -> None:
         self._history.append((tool_name, args_hash(args)))
 
-    def is_looping(self, tool_name: str, args: dict) -> bool:
+    def is_looping(self, tool_name: str, args: dict[str, Any]) -> bool:
         key = (tool_name, args_hash(args))
         threshold = self._per_tool.get(tool_name, self._threshold)
         # Including the about-to-execute call: count prior occurrences + 1.

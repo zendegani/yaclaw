@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-logger = logging.getLogger(__name__)
-
 from fastapi import (
     FastAPI,
     File,
@@ -59,6 +57,8 @@ from pishkar.observability.phoenix_sink import PhoenixSink
 from pishkar.observability.sqlite_sink import SqliteSink
 from pishkar.tools.approval_gate import ApprovalDecision
 from pishkar.workspace.store import SessionStore
+
+logger = logging.getLogger(__name__)
 
 HandlerFactory = Callable[[], Handler]
 
@@ -255,8 +255,8 @@ def create_app(
 
 def _make_control_handler(
     approval_router: ApprovalRouter | None, session_id: str
-):
-    async def handle(payload: dict) -> None:
+) -> Callable[[dict[str, Any]], Any]:
+    async def handle(payload: dict[str, Any]) -> None:
         if approval_router is None:
             return
         if payload.get("type") != "approval_response":
@@ -600,7 +600,7 @@ def _telegram_factory_from_env(
     model_selector: Any = None,
     transcriber: Any = None,
     synthesizer: Any = None,
-):
+) -> ChannelRunnerFactory | None:
     """Return a channel-runner factory if `TELEGRAM_BOT_TOKEN` is set,
     otherwise None. The runner is constructed lazily inside `create_app`
     so it can take the gateway built there."""

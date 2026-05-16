@@ -12,11 +12,12 @@ runner wraps them.
 
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 ToolFunc = Callable[..., Awaitable[Any]]
+F = TypeVar("F", bound=ToolFunc)
 
 
 class ToolSpec(BaseModel):
@@ -49,8 +50,8 @@ def tool(
     name: str | None = None,
     description: str = "",
     args_model: type[BaseModel] | None = None,
-) -> Callable[[ToolFunc], ToolFunc]:
-    def decorate(func: ToolFunc) -> ToolFunc:
+) -> Callable[[F], F]:
+    def decorate(func: F) -> F:
         tool_name = name or func.__name__
         model = args_model or _model_from_signature(func, f"{tool_name}_args")
         desc = description or (inspect.getdoc(func) or "").strip()
@@ -69,7 +70,7 @@ def tool(
 
 def get_spec(func: ToolFunc) -> ToolSpec:
     spec = getattr(func, "_tool_spec", None)
-    if spec is None:
+    if not isinstance(spec, ToolSpec):
         raise TypeError(f"{func.__name__} is not decorated with @tool")
     return spec
 

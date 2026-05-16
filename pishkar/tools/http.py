@@ -19,7 +19,8 @@ def _request_sync(method: str, url: str, headers: dict[str, str] | None,
     data = body.encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     with urllib.request.urlopen(req, timeout=_URLLIB_TIMEOUT) as resp:  # noqa: S310
-        return resp.read().decode("utf-8", errors="replace")
+        raw: bytes = resp.read()
+    return raw.decode("utf-8", errors="replace")
 
 
 @tool(description="Make an HTTP request. `body` may be a string; pass JSON via `json_body`.")

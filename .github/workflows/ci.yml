@@ -29,16 +29,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      # Lint and typecheck are informational while the existing
-      # codebase still has accumulated violations. Flip to required
-      # (drop `continue-on-error`) once the backlog is cleared.
       - name: Ruff
         run: uv run ruff check .
-        continue-on-error: true
 
       - name: Mypy
         run: uv run mypy pishkar
-        continue-on-error: true
 
       - name: Pytest
         run: uv run pytest -q

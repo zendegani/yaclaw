@@ -6,7 +6,7 @@ tool call. The TypeScript client mirror is generated from these models.
 """
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -48,7 +48,7 @@ class ThinkingBlock(BaseModel):
 
 
 ContentBlock = Annotated[
-    Union[TextBlock, ToolUseBlock, ThinkingBlock],
+    TextBlock | ToolUseBlock | ThinkingBlock,
     Field(discriminator="type"),
 ]
 
@@ -72,7 +72,7 @@ class ThinkingDelta(BaseModel):
 
 
 ContentDelta = Annotated[
-    Union[TextDelta, InputJsonDelta, ThinkingDelta],
+    TextDelta | InputJsonDelta | ThinkingDelta,
     Field(discriminator="type"),
 ]
 
@@ -168,19 +168,19 @@ class SessionChanged(_EventBase):
 
 
 Event = Annotated[
-    Union[
-        TurnStart,
-        MessageStart,
-        ContentBlockStart,
-        ContentBlockDelta,
-        ContentBlockStop,
-        MessageDelta,
-        MessageStop,
-        ToolResult,
-        TurnEnd,
-        ApprovalRequest,
-        UserMessage,
-        SessionChanged,
-    ],
+    (
+        TurnStart
+        | MessageStart
+        | ContentBlockStart
+        | ContentBlockDelta
+        | ContentBlockStop
+        | MessageDelta
+        | MessageStop
+        | ToolResult
+        | TurnEnd
+        | ApprovalRequest
+        | UserMessage
+        | SessionChanged
+    ),
     Field(discriminator="type"),
 ]
