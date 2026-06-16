@@ -12,7 +12,7 @@ dependencies = [
     "litellm>=1.50",
     "python-dotenv>=1.0",
     "python-telegram-bot>=21",
-    "python-multipart>=0.0.18",
+    "python-multipart>=0.0.31",
     "httpx>=0.28.1",
 ]
 
