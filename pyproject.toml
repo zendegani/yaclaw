@@ -5,14 +5,14 @@ description = "Personal AI butler"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "pydantic>=2",
+    "pydantic>=2.13.4",
     "aiosqlite>=0.20",
-    "fastapi>=0.136.1",
+    "fastapi>=0.138.0",
     "uvicorn[standard]>=0.46.0",
     "litellm>=1.50",
     "python-dotenv>=1.0",
-    "python-telegram-bot>=21",
-    "python-multipart>=0.0.18",
+    "python-telegram-bot>=22.8",
+    "python-multipart>=0.0.32",
     "httpx>=0.28.1",
 ]
 
@@ -20,7 +20,7 @@ dependencies = [
 # LLM-trace backends. Pick one (or neither):
 #   uv sync --extra phoenix     # default — single container, Pi 5 friendly
 #   uv sync --extra langfuse    # richer dashboards; needs more RAM (VPS)
-phoenix = ["arize-phoenix-otel>=0.6"]
+phoenix = ["arize-phoenix-otel>=0.16.1"]
 langfuse = ["langfuse>=2,<3"]
 
 [dependency-groups]
