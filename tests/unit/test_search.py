@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -78,7 +79,7 @@ async def test_falls_back_when_primary_errors(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("BRAVE_API_KEY", "brv")
 
     def responder(kw: dict[str, Any]) -> str:
-        if "tavily.com" in kw["url"]:
+        if urlparse(kw["url"]).hostname == "api.tavily.com":
             raise RuntimeError("tavily down")
         return json.dumps({"web": {"results": [{"title": "fallback", "url": "https://fb"}]}})
 
@@ -120,7 +121,7 @@ async def test_env_override_picks_engine(monkeypatch: pytest.MonkeyPatch) -> Non
         lambda _kw: json.dumps({"web": {"results": []}}),
     )
     await search_mod.search(query="q")
-    assert "search.brave.com" in fake.calls[0]["url"]
+    assert urlparse(fake.calls[0]["url"]).hostname == "api.search.brave.com"
 
 
 async def test_all_engines_failing_returns_error_summary(
