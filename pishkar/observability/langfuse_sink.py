@@ -18,8 +18,11 @@ class LangFuseSink:
     """Thin wrapper that forwards `after_llm` and `on_turn_complete`
     payloads to a LangFuse client.
 
-    Pass any object exposing `.trace(...)` and `.generation(...)` —
-    typically `langfuse.Langfuse(...)`. Tests inject a fake."""
+    Pass any object exposing the v4 observation API: a root span via
+    `.start_span(...)`, child generations via `span.start_generation(...)`,
+    `span.update_trace(...)` for trace-level attributes, and `.end()` to
+    close an observation. Typically `langfuse.Langfuse(...)`. Tests inject
+    a fake."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
@@ -41,18 +44,18 @@ class LangFuseSink:
         output_tokens: int = 0,
         **_: Any,
     ) -> None:
-        trace = self._traces.get(turn_id)
-        if trace is None:
-            trace = self._client.trace(
-                id=turn_id, session_id=session_id, user_id=user_id
-            )
-            self._traces[turn_id] = trace
-        trace.generation(
+        root = self._traces.get(turn_id)
+        if root is None:
+            root = self._client.start_span(name=turn_id)
+            root.update_trace(session_id=session_id, user_id=user_id)
+            self._traces[turn_id] = root
+        generation = root.start_generation(
             name=model,
             model=model,
-            usage={"input": input_tokens, "output": output_tokens},
+            usage_details={"input": input_tokens, "output": output_tokens},
             metadata={"stop_reason": stop_reason},
         )
+        generation.end()
 
     async def _on_turn_complete(
         self,
@@ -61,11 +64,11 @@ class LangFuseSink:
         stop_reason: str | None = None,
         **_: Any,
     ) -> None:
-        trace = self._traces.pop(turn_id, None)
-        if trace is None:
+        root = self._traces.pop(turn_id, None)
+        if root is None:
             return
-        if hasattr(trace, "update"):
-            trace.update(metadata={"final_stop_reason": stop_reason})
+        root.update_trace(metadata={"final_stop_reason": stop_reason})
+        root.end()
 
 
 def build_langfuse_client(
@@ -74,11 +77,7 @@ def build_langfuse_client(
     host: str = "http://localhost:3000",
 ) -> Any:
     """Lazy-import factory for `langfuse.Langfuse`."""
-    # No specific code: langfuse is an optional extra. When it's
-    # installed the error is `import-untyped` (no py.typed marker);
-    # when it's not installed the error is `import-not-found`. Plain
-    # `# type: ignore` covers both without going stale.
-    from langfuse import Langfuse  # type: ignore
+    from langfuse import Langfuse
 
     return Langfuse(public_key=public_key, secret_key=secret_key, host=host)
 

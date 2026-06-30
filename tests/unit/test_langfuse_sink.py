@@ -4,27 +4,42 @@ from pishkar.gateway.hooks import AFTER_LLM, ON_TURN_COMPLETE, HookManager
 from pishkar.observability.langfuse_sink import LangFuseSink
 
 
-class FakeTrace:
+class FakeGeneration:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
-        self.generations: list[dict[str, Any]] = []
-        self.updates: list[dict[str, Any]] = []
+        self.ended = False
 
-    def generation(self, **kwargs: Any) -> None:
-        self.generations.append(kwargs)
+    def end(self) -> None:
+        self.ended = True
 
-    def update(self, **kwargs: Any) -> None:
-        self.updates.append(kwargs)
+
+class FakeSpan:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self.generations: list[FakeGeneration] = []
+        self.trace_updates: list[dict[str, Any]] = []
+        self.ended = False
+
+    def update_trace(self, **kwargs: Any) -> None:
+        self.trace_updates.append(kwargs)
+
+    def start_generation(self, **kwargs: Any) -> FakeGeneration:
+        g = FakeGeneration(**kwargs)
+        self.generations.append(g)
+        return g
+
+    def end(self) -> None:
+        self.ended = True
 
 
 class FakeLangFuse:
     def __init__(self) -> None:
-        self.traces: list[FakeTrace] = []
+        self.spans: list[FakeSpan] = []
 
-    def trace(self, **kwargs: Any) -> FakeTrace:
-        t = FakeTrace(**kwargs)
-        self.traces.append(t)
-        return t
+    def start_span(self, **kwargs: Any) -> FakeSpan:
+        s = FakeSpan(**kwargs)
+        self.spans.append(s)
+        return s
 
 
 async def test_after_llm_starts_trace_and_records_generation() -> None:
@@ -41,14 +56,15 @@ async def test_after_llm_starts_trace_and_records_generation() -> None:
     )
     await hm.drain()
 
-    assert len(client.traces) == 1
-    assert client.traces[0].kwargs == {
-        "id": "t1", "session_id": "s1", "user_id": "ali"
-    }
-    [gen] = client.traces[0].generations
-    assert gen["model"] == "claude-opus"
-    assert gen["usage"] == {"input": 10, "output": 5}
-    assert gen["metadata"] == {"stop_reason": "end_turn"}
+    assert len(client.spans) == 1
+    span = client.spans[0]
+    assert span.kwargs == {"name": "t1"}
+    assert span.trace_updates == [{"session_id": "s1", "user_id": "ali"}]
+    [gen] = span.generations
+    assert gen.kwargs["model"] == "claude-opus"
+    assert gen.kwargs["usage_details"] == {"input": 10, "output": 5}
+    assert gen.kwargs["metadata"] == {"stop_reason": "end_turn"}
+    assert gen.ended is True
 
 
 async def test_two_after_llm_calls_share_one_trace_per_turn() -> None:
@@ -66,8 +82,8 @@ async def test_two_after_llm_calls_share_one_trace_per_turn() -> None:
         )
     await hm.drain()
 
-    assert len(client.traces) == 1
-    assert len(client.traces[0].generations) == 2
+    assert len(client.spans) == 1
+    assert len(client.spans[0].generations) == 2
 
 
 async def test_on_turn_complete_finalizes_trace() -> None:
@@ -85,8 +101,12 @@ async def test_on_turn_complete_finalizes_trace() -> None:
     hm.emit(ON_TURN_COMPLETE, turn_id="t1", session_id="s1", stop_reason="end_turn")
     await hm.drain()
 
-    [trace] = client.traces
-    assert trace.updates == [{"metadata": {"final_stop_reason": "end_turn"}}]
+    [span] = client.spans
+    assert span.trace_updates == [
+        {"session_id": "s1", "user_id": "ali"},
+        {"metadata": {"final_stop_reason": "end_turn"}},
+    ]
+    assert span.ended is True
 
 
 async def test_on_turn_complete_without_trace_is_noop() -> None:
@@ -97,12 +117,12 @@ async def test_on_turn_complete_without_trace_is_noop() -> None:
 
     hm.emit(ON_TURN_COMPLETE, turn_id="ghost", session_id="s", stop_reason="end_turn")
     await hm.drain()
-    assert client.traces == []
+    assert client.spans == []
 
 
 async def test_client_failure_is_swallowed_by_hooks() -> None:
     class ExplodingClient:
-        def trace(self, **_: Any) -> Any:
+        def start_span(self, **_: Any) -> Any:
             raise RuntimeError("LangFuse down")
 
     sink = LangFuseSink(ExplodingClient())
