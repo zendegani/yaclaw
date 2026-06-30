@@ -21,7 +21,7 @@ dependencies = [
 #   uv sync --extra phoenix     # default — single container, Pi 5 friendly
 #   uv sync --extra langfuse    # richer dashboards; needs more RAM (VPS)
 phoenix = ["arize-phoenix-otel>=0.16.1"]
-langfuse = ["langfuse>=2,<3"]
+langfuse = ["langfuse>=4.12.0,<5"]
 
 [dependency-groups]
 dev = [
