@@ -9,6 +9,7 @@
 ## 🚀 Features
 
 - **Local-First Memory**: Data and sessions are written to human-readable markdown (`~/.pishkar/`) and local SQLite databases.
+- **Semantic Recall (optional)**: Set `PISHKAR_EMBEDDING_MODEL` and Pishkar embeds every message locally in SQLite, letting it find past conversations by meaning (`search_memory` tool, sqlite-vec accelerated).
 - **Agentic Tool Use & Safety**: Can execute bash, read/write files, and make HTTP requests—guarded by a built-in **Approval Gate** (Ask Me / Allow Once / Allow All) to ensure you stay in control.
 - **MCP Extensibility**: Fully wired with the Model Context Protocol (MCP) to seamlessly connect to external tools and services. 
 - **Crash-Resilient**: Powered by an SQLite-backed queue with mid-turn crash detection. If your machine reboots, Pishkar resumes exactly where it left off.
