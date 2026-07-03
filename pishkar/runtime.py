@@ -29,6 +29,7 @@ from pishkar.tools.backup import backup
 from pishkar.tools.bash import bash
 from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
+from pishkar.tools.memory import search_memory
 from pishkar.tools.plan import plan
 from pishkar.tools.read_url import read_url
 from pishkar.tools.registry import ToolRegistry
@@ -240,6 +241,7 @@ def _default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register_many(
         read_file, write_file, http, bash, read_url, search, plan, speak, backup,
+        search_memory,
     )
     return reg
 

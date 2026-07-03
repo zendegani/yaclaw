@@ -91,6 +91,7 @@ def create_app(
     user_id: str | None = None,
     transcriber: Any = None,
     webhook_config_path: Path | None = None,
+    memory_index: Any = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -110,6 +111,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await store.open()
+        if memory_index is not None:
+            await memory_index.ensure_schema()
         if recovery_target is not None:
             from pishkar.runtime import recover_on_startup
 
@@ -471,6 +474,7 @@ def main() -> None:
         handler = _default_handler  # echo stub keeps the server bootable offline
 
     user_id = os.environ.get("PISHKAR_USER", "user")
+    memory_index = _build_memory_index(store, hooks)
     transcriber = _build_transcriber()
     app = create_app(
         store=store,
@@ -483,6 +487,7 @@ def main() -> None:
         user_id=user_id,
         transcriber=transcriber,
         webhook_config_path=db_path.parent / "webhooks.json",
+        memory_index=memory_index,
         channel_runner_factory=_telegram_factory_from_env(
             user_id=user_id,
             store=store,
@@ -659,6 +664,29 @@ def _attach_reflector(
         every_n_turns=every_n,
     ).attach(hooks)
     logger.info("reflector enabled (every %d turns)", every_n)
+
+
+def _build_memory_index(store: SessionStore, hooks: HookManager) -> Any:
+    """Construct the semantic-memory index if an embedding model is set.
+
+    `PISHKAR_EMBEDDING_MODEL` (any litellm embedding model) enables it:
+    new messages are embedded after each completed turn, and the
+    `search_memory` tool starts returning real results. Unset = the tool
+    explains how to enable itself and nothing is embedded.
+    """
+    import os
+
+    model = os.environ.get("PISHKAR_EMBEDDING_MODEL")
+    if not model:
+        return None
+    from pishkar.tools import memory as memory_tool
+    from pishkar.workspace.memory import LiteLLMEmbedder, MemoryIndex
+
+    index = MemoryIndex(store, LiteLLMEmbedder(model))
+    index.attach(hooks)
+    memory_tool.configure(index)
+    logger.info("semantic memory enabled (embedding model %s)", model)
+    return index
 
 
 def _build_transcriber() -> Any:
