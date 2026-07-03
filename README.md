@@ -109,6 +109,25 @@ PISHKAR_PIPER_VOICE=/home/you/.pishkar/piper/en_US-lessac-medium.onnx
 
 When TTS is configured, voice-in turns into voice-out (alongside the text reply). If `PISHKAR_TTS_ENGINE` is unset, Pishkar simply replies in text — a fine fallback.
 
+### 5. Webhooks (optional)
+
+Let external systems (GitHub, Home Assistant, IFTTT — anything that can POST) wake Pishkar up. Create `~/.pishkar/webhooks.json`:
+
+```json
+[
+  {
+    "name": "gh-ci",
+    "user_id": "ali",
+    "secret": "a-long-random-string",
+    "prompt": "CI finished. Summarize the payload for me."
+  }
+]
+```
+
+Then point the sender at `POST http://<host>:8765/webhook/gh-ci` with the secret in the `X-Pishkar-Secret` header. The request body (JSON or text) is handed to the agent as a message. Edits to `webhooks.json` apply immediately — no restart needed.
+
+Webhook messages run **untrusted** by default: the agent can read and reply but gets no tools, since payloads are attacker-controllable text. Raise `"trust_level"` per hook only if you trust the sender. Note the server binds to `127.0.0.1`, so expose it deliberately (reverse proxy, Tailscale, SSH tunnel) if the sender is remote.
+
 ---
 
 ## 🍓 Running on a Raspberry Pi 5

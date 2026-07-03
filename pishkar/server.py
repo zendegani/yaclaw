@@ -90,6 +90,7 @@ def create_app(
     model_selector: Any = None,
     user_id: str | None = None,
     transcriber: Any = None,
+    webhook_config_path: Path | None = None,
 ) -> FastAPI:
     hooks = hooks or HookManager()
     sink = SqliteSink(store)
@@ -152,6 +153,13 @@ def create_app(
     app.state.gateway = gateway
     app.state.hooks = hooks
     app.state.user_registry = user_registry
+
+    if webhook_config_path is not None:
+        from pishkar.triggers.webhook import build_webhook_router
+
+        app.include_router(
+            build_webhook_router(gateway.submit, webhook_config_path)
+        )
 
     @app.get("/sessions/latest/{user_id}")
     async def _latest_session(user_id: str) -> dict[str, str | None]:
@@ -474,6 +482,7 @@ def main() -> None:
         model_selector=model_selector,
         user_id=user_id,
         transcriber=transcriber,
+        webhook_config_path=db_path.parent / "webhooks.json",
         channel_runner_factory=_telegram_factory_from_env(
             user_id=user_id,
             store=store,
