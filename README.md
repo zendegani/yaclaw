@@ -169,7 +169,7 @@ uv run python -m pishkar.server
 
 **Tips for Pi Deployment:**
 
-- **Background Service**: Wrap the run command in a systemd unit (`uv run --directory /path/to/yaclaw python -m pishkar.server`) to keep it running after you log out.
+- **Background Service**: From the repo root, `uv run python -m pishkar.daemon install` writes a systemd user unit (a LaunchAgent on macOS) wrapping the same server entrypoint, then prints the `systemctl --user enable --now` / `loginctl enable-linger` commands to activate it. `… pishkar.daemon uninstall` removes it.
 - **Remote Access**: Access the Web UI from your laptop securely using SSH port forwarding:
 
   ```bash
