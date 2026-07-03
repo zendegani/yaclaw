@@ -25,6 +25,7 @@ from pishkar.providers.base import ModelProvider
 from pishkar.providers.litellm_provider import LiteLLMProvider, build_router_completion
 from pishkar.providers.minimax import is_minimax_model, minimax_acompletion
 from pishkar.tools.approval_gate import ApprovalGate
+from pishkar.tools.backup import backup
 from pishkar.tools.bash import bash
 from pishkar.tools.fs import read_file, write_file
 from pishkar.tools.http import http
@@ -238,7 +239,7 @@ def _tool_max_bytes_from_env() -> int:
 def _default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register_many(
-        read_file, write_file, http, bash, read_url, search, plan, speak,
+        read_file, write_file, http, bash, read_url, search, plan, speak, backup,
     )
     return reg
 
