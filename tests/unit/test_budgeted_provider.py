@@ -118,6 +118,93 @@ async def test_no_user_id_skips_budget_and_recording(store: SessionStore) -> Non
     assert (inp, out) == (0, 0)
 
 
+async def _drain_and_settle(bp: BudgetedProvider, **kwargs: Any) -> None:
+    """Drain the stream, then let fire-and-forget alert tasks run."""
+    import asyncio
+
+    await _drain(bp, **kwargs)
+    await asyncio.gather(*bp._alert_tasks, return_exceptions=True)
+
+
+async def test_alert_fires_once_when_threshold_crossed(store: SessionStore) -> None:
+    await store.record_token_spend("ali", "m", 800, 0)  # 80% of 1000
+    alerts: list[tuple[str, int, int, float]] = []
+
+    async def on_alert(user_id: str, spent: int, budget: int, threshold: float) -> None:
+        alerts.append((user_id, spent, budget, threshold))
+
+    inner = FakeProvider([ProviderChunk(text="ok")])
+    bp = BudgetedProvider(inner, store, daily_budget_tokens=1000, alert_fn=on_alert)
+
+    await _drain_and_settle(bp, model="m", messages=[], user_id="ali")
+    await _drain_and_settle(bp, model="m", messages=[], user_id="ali")
+
+    assert alerts == [("ali", 800, 1000, 0.8)]
+
+
+async def test_no_alert_below_threshold(store: SessionStore) -> None:
+    await store.record_token_spend("ali", "m", 500, 0)
+    alerts: list[float] = []
+
+    async def on_alert(user_id: str, spent: int, budget: int, threshold: float) -> None:
+        alerts.append(threshold)
+
+    inner = FakeProvider([ProviderChunk(text="ok")])
+    bp = BudgetedProvider(inner, store, daily_budget_tokens=1000, alert_fn=on_alert)
+
+    await _drain_and_settle(bp, model="m", messages=[], user_id="ali")
+    assert alerts == []
+
+
+async def test_only_highest_crossed_threshold_fires(store: SessionStore) -> None:
+    await store.record_token_spend("ali", "m", 900, 0)  # crosses 0.5 and 0.8
+    alerts: list[float] = []
+
+    async def on_alert(user_id: str, spent: int, budget: int, threshold: float) -> None:
+        alerts.append(threshold)
+
+    inner = FakeProvider([ProviderChunk(text="ok")])
+    bp = BudgetedProvider(
+        inner, store, daily_budget_tokens=1000,
+        alert_thresholds=(0.5, 0.8), alert_fn=on_alert,
+    )
+
+    await _drain_and_settle(bp, model="m", messages=[], user_id="ali")
+    assert alerts == [0.8]
+
+
+async def test_alert_failure_does_not_break_stream(store: SessionStore) -> None:
+    await store.record_token_spend("ali", "m", 800, 0)
+
+    async def on_alert(user_id: str, spent: int, budget: int, threshold: float) -> None:
+        raise RuntimeError("exporter down")
+
+    inner = FakeProvider([ProviderChunk(text="ok")])
+    bp = BudgetedProvider(inner, store, daily_budget_tokens=1000, alert_fn=on_alert)
+
+    chunks = await _drain(bp, model="m", messages=[], user_id="ali")
+    assert [c.text for c in chunks] == ["ok"]
+    import asyncio
+
+    await asyncio.gather(*bp._alert_tasks, return_exceptions=True)
+
+
+async def test_alerts_tracked_per_user(store: SessionStore) -> None:
+    await store.record_token_spend("ali", "m", 800, 0)
+    await store.record_token_spend("bob", "m", 800, 0)
+    alerts: list[str] = []
+
+    async def on_alert(user_id: str, spent: int, budget: int, threshold: float) -> None:
+        alerts.append(user_id)
+
+    inner = FakeProvider([ProviderChunk(text="ok")])
+    bp = BudgetedProvider(inner, store, daily_budget_tokens=1000, alert_fn=on_alert)
+
+    await _drain_and_settle(bp, model="m", messages=[], user_id="ali")
+    await _drain_and_settle(bp, model="m", messages=[], user_id="bob")
+    assert sorted(alerts) == ["ali", "bob"]
+
+
 async def test_yesterdays_spend_does_not_count(store: SessionStore) -> None:
     await store.db.execute(
         "INSERT INTO token_spend(user_id, model, input_tokens, output_tokens, "

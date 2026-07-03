@@ -417,6 +417,9 @@ def main() -> None:
     _attach_trace_sink(hooks)
     model_selector = None
     tool_registry = None
+    # Filled after `create_app` builds the gateway; the budget alert
+    # closure reads it lazily so alerts can submit synthetic messages.
+    gateway_holder: list[Gateway] = []
     if has_key:
         from pishkar.runtime import (
             ModelSelector,
@@ -429,6 +432,17 @@ def main() -> None:
         loader = WorkspaceLoader(base_dir=db_path.parent)
         loader.ensure_starter(os.environ.get("PISHKAR_USER", "user"))
         provider, model = build_default_provider()
+        daily_budget = _read_daily_budget()
+        if daily_budget:
+            from pishkar.providers.budgeted import BudgetedProvider
+
+            provider = BudgetedProvider(
+                provider,
+                store,
+                daily_budget,
+                model_label=model,
+                alert_fn=_make_budget_alert(store, gateway_holder),
+            )
         model_selector = ModelSelector(default=model)
         # Build the registry up front so MCP tools (connected during the
         # lifespan startup) land in the same instance the handler reads.
@@ -468,7 +482,70 @@ def main() -> None:
             synthesizer=_build_synthesizer(),
         ),
     )
+    gateway_holder.append(app.state.gateway)
     uvicorn.run(app, host="127.0.0.1", port=8765)
+
+
+def _read_daily_budget() -> int | None:
+    """Parse `PISHKAR_DAILY_TOKEN_BUDGET` (tokens/day/user). None = no cap."""
+    import os
+
+    raw = os.environ.get("PISHKAR_DAILY_TOKEN_BUDGET")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "PISHKAR_DAILY_TOKEN_BUDGET=%r is not an integer; budget disabled", raw
+        )
+        return None
+    if value <= 0:
+        logger.warning(
+            "PISHKAR_DAILY_TOKEN_BUDGET=%r must be positive; budget disabled", raw
+        )
+        return None
+    return value
+
+
+def _make_budget_alert(
+    store: SessionStore, gateway_holder: list[Gateway]
+) -> Callable[[str, int, int, float], Any]:
+    """Build the `BudgetedProvider.alert_fn` that turns a crossed spend
+    threshold into a synthetic inbound message ("budget at 80% today…"),
+    so the agent tells the user through whatever channel is attached."""
+
+    async def alert(user_id: str, spent: int, budget: int, threshold: float) -> None:
+        if not gateway_holder:
+            return
+        gateway = gateway_holder[0]
+        session_id = await store.latest_session_for_user(user_id)
+        if session_id is None:
+            session_id = (await store.create_session(user_id)).session_id
+        pct = round(threshold * 100)
+        await gateway.submit(
+            InboundMessage(
+                user_id=user_id,
+                session_id=session_id,
+                channel="budget",
+                content=(
+                    f"System notice: today's token spend for {user_id} is "
+                    f"{spent:,} of the {budget:,} daily budget — the {pct}% "
+                    f"alert threshold was crossed. Briefly inform the user, "
+                    f"and suggest switching to a cheaper model if that makes "
+                    f"sense."
+                ),
+                metadata={
+                    "budget_alert": {
+                        "spent": spent,
+                        "budget": budget,
+                        "threshold": threshold,
+                    }
+                },
+            )
+        )
+
+    return alert
 
 
 def _attach_trace_sink(hooks: HookManager) -> None:
