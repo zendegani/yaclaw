@@ -39,7 +39,7 @@ from pishkar.core.events import (
     TurnEnd,
     UserMessage,
 )
-from pishkar.core.messages import InboundMessage
+from pishkar.core.messages import InboundMessage, TrustLevel
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway
 from pishkar.gateway.user_registry import UserChannelRegistry
@@ -275,10 +275,12 @@ class TelegramBotRunner:
         model_selector: ModelSelector | None = None,
         transcriber: Transcriber | None = None,
         synthesizer: Synthesizer | None = None,
+        trust_level: TrustLevel = "full",
     ) -> None:
         self._token = token
         self._owner_id = owner_id
         self._user_id = user_id
+        self._trust_level = trust_level
         self._gateway = gateway
         self._approval_router = approval_router
         self._store = store
@@ -474,6 +476,7 @@ class TelegramBotRunner:
             session_id=session_id,
             channel="telegram",
             content=update.message.text,
+            trust_level=self._trust_level,
         )
         await self._gateway.submit(msg)
 
@@ -516,6 +519,7 @@ class TelegramBotRunner:
             session_id=session_id,
             channel="telegram",
             content=text,
+            trust_level=self._trust_level,
         )
         await self._gateway.submit(msg)
 

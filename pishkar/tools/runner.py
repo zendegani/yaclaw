@@ -1,7 +1,7 @@
 """`ToolRunner` Protocol + `SubprocessToolRunner`.
 
 Every tool call routes through a `ToolRunner` so timeout, max-result
-size, and approval are enforced uniformly. Day-one runner runs tools
+size, approval, and trust-level policy are enforced uniformly. Day-one runner runs tools
 in-process (subprocess only for the `bash` tool itself, via the tool
 implementation). A `DockerToolRunner` would slot in by re-implementing
 the same Protocol.
@@ -19,8 +19,10 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from pishkar.core.messages import TrustLevel
 from pishkar.gateway.hooks import BEFORE_TOOL, ON_TOOL_RESULT, HookManager
 from pishkar.tools.registry import ToolRegistry
+from pishkar.tools.trust import TrustPolicy
 
 DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_MAX_RESULT_BYTES = 1_000_000
@@ -81,12 +83,16 @@ class SubprocessToolRunner(ToolRunner):
         default_max_bytes: int = DEFAULT_MAX_RESULT_BYTES,
         approval_fn: ApprovalFn | None = None,
         hooks: HookManager | None = None,
+        trust_policy: TrustPolicy | None = None,
+        trust_level: TrustLevel = "full",
     ) -> None:
         self._registry = registry
         self._default_timeout_s = default_timeout_s
         self._default_max_bytes = default_max_bytes
         self._approval_fn = approval_fn
         self._hooks = hooks
+        self._trust_policy = trust_policy
+        self._trust_level = trust_level
 
     async def run(
         self,
@@ -113,6 +119,20 @@ class SubprocessToolRunner(ToolRunner):
     async def _dispatch(
         self, tool_name: str, args: dict[str, Any], timeout: float, cap: int
     ) -> ToolResult:
+        if self._trust_policy is not None and not self._trust_policy.allows(
+            tool_name, self._trust_level
+        ):
+            required = self._trust_policy.required(tool_name)
+            return ToolResult(
+                tool_name=tool_name,
+                content=(
+                    f"[denied] {tool_name} requires trust level {required!r}; "
+                    f"this message arrived with {self._trust_level!r}"
+                ),
+                is_error=True,
+                denied=True,
+            )
+
         if self._approval_fn is not None:
             allowed = await self._approval_fn(tool_name, args)
             if not allowed:
