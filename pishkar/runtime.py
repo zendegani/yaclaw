@@ -17,7 +17,7 @@ from typing import Any
 from pishkar.core.agent import run_turn
 from pishkar.core.context import current_channel, current_session_id, current_turn_id
 from pishkar.core.events import Event
-from pishkar.core.messages import InboundMessage
+from pishkar.core.messages import InboundMessage, TrustLevel
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Handler
 from pishkar.gateway.hooks import HookManager
@@ -34,6 +34,7 @@ from pishkar.tools.registry import ToolRegistry
 from pishkar.tools.runner import SubprocessToolRunner
 from pishkar.tools.search import search
 from pishkar.tools.speak import speak
+from pishkar.tools.trust import TrustPolicy
 from pishkar.workspace.loader import WorkspaceLoader, compose_system_prompt
 from pishkar.workspace.store import SessionStore
 
@@ -75,9 +76,11 @@ def build_handler(
     approval_router: ApprovalRouter | None = None,
     gated_tools: frozenset[str] = DEFAULT_GATED_TOOLS,
     store: SessionStore | None = None,
+    trust_policy: TrustPolicy | None = None,
 ) -> Handler:
     selector = model if isinstance(model, ModelSelector) else ModelSelector(default=model)
     registry = registry or _default_registry()
+    trust_policy = trust_policy or TrustPolicy()
     histories: dict[str, list[dict[str, Any]]] = {}
     gates: dict[str, ApprovalGate] = {}
     interrupted = interrupted_sessions if interrupted_sessions is not None else set()
@@ -108,7 +111,9 @@ def build_handler(
             always_allow=always_allow,
         )
 
-    def _runner_for(session_id: str, user_id: str) -> SubprocessToolRunner:
+    def _runner_for(
+        session_id: str, user_id: str, trust_level: TrustLevel
+    ) -> SubprocessToolRunner:
         if runner is not None:
             return runner
         gate = gates.get(session_id)
@@ -120,6 +125,8 @@ def build_handler(
             hooks=hooks,
             approval_fn=gate.check,
             default_max_bytes=tool_max_bytes,
+            trust_policy=trust_policy,
+            trust_level=trust_level,
         )
 
     async def _hydrate(session_id: str) -> list[dict[str, Any]]:
@@ -143,7 +150,7 @@ def build_handler(
         async def gen() -> AsyncIterator[Event]:
             current_channel.set(msg.channel)
             history = await _ensure_history(msg.session_id)
-            turn_runner = _runner_for(msg.session_id, msg.user_id)
+            turn_runner = _runner_for(msg.session_id, msg.user_id, msg.trust_level)
             # Re-read the workspace per turn so edits the agent makes to
             # USER.md take effect on the next turn without a server restart.
             if workspace_loader is not None:
@@ -169,7 +176,11 @@ def build_handler(
                 # Read fresh per turn so tools registered after handler
                 # construction (e.g. MCP servers connected during lifespan
                 # startup) are visible to the LLM on the very next call.
-                tool_schemas=registry.schemas("openai"),
+                # Filtered by the message's trust level so low-trust input
+                # never sees tools it may not call.
+                tool_schemas=trust_policy.filter_schemas(
+                    registry.schemas("openai"), msg.trust_level
+                ),
                 system=turn_system,
                 model=selector.current(),
                 hooks=hooks,

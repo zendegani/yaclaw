@@ -21,7 +21,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -47,7 +47,7 @@ from pishkar.core.events import (
     TurnStart,
     UserMessage,
 )
-from pishkar.core.messages import InboundMessage, OutboundMessage
+from pishkar.core.messages import InboundMessage, OutboundMessage, TrustLevel
 from pishkar.gateway.approval_router import ApprovalRouter
 from pishkar.gateway.gateway import Gateway, Handler
 from pishkar.gateway.hooks import HookManager
@@ -616,6 +616,16 @@ def _telegram_factory_from_env(
         logger.warning("TELEGRAM_OWNER_ID must be an integer; got %r", owner_raw)
         return None
 
+    trust_raw = os.environ.get("PISHKAR_TELEGRAM_TRUST", "full").lower()
+    if trust_raw not in {"full", "limited", "untrusted"}:
+        logger.warning(
+            "PISHKAR_TELEGRAM_TRUST=%r is not one of full/limited/untrusted; "
+            "using 'full'",
+            trust_raw,
+        )
+        trust_raw = "full"
+    trust_level = cast(TrustLevel, trust_raw)
+
     def factory(
         gateway: Gateway,
         approval_router: ApprovalRouter | None,
@@ -635,6 +645,7 @@ def _telegram_factory_from_env(
                 model_selector=model_selector,
                 transcriber=transcriber,
                 synthesizer=synthesizer,
+                trust_level=trust_level,
             )
         ]
 
