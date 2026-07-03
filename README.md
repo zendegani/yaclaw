@@ -16,7 +16,7 @@
 - **Background Tasks**: Can wake up on a cron schedule (`HEARTBEAT.md`) to do background work without wasting LLM tokens while idle.
 - **Full Observability**: OpenTelemetry tracing built-in (via Arize Phoenix or Langfuse) so you can see exactly what the LLM is thinking and doing under the hood.
 - **Multi-Interface**: Chat via a beautiful Web UI or on the go via Telegram — including voice notes (Whisper STT + optional Piper TTS).
-- **Multi-Provider LLM**: Supports Anthropic, OpenAI, Gemini, OpenRouter, Groq, Moonshot, and Qwen.
+- **Multi-Provider LLM**: Supports Anthropic, OpenAI, Gemini, OpenRouter, Groq, Moonshot, Qwen, and MiniMax.
 - **Lightweight**: Easily runs on a Raspberry Pi 5.
 
 ## 🛠️ Requirements
