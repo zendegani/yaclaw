@@ -1,0 +1,22 @@
+# Arize Phoenix — the default LLM-trace backend (PISHKAR_TRACE_BACKEND=phoenix).
+# Single container, ~300 MB resident: fits a Pi 5 8 GB alongside the butler.
+#
+#   docker compose -f deploy/docker-compose.phoenix.yml up -d
+#
+# Traces persist in SQLite under the named volume. The server exports to
+# http://localhost:6006/v1/traces (the PHOENIX_ENDPOINT default) and the
+# UI lives at http://localhost:6006.
+services:
+  phoenix:
+    # `latest` tracks upstream; pin a version tag for reproducible deploys.
+    image: arizephoenix/phoenix:latest
+    restart: unless-stopped
+    ports:
+      - "6006:6006" # UI + OTLP/HTTP collector
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix-data:/mnt/data
+
+volumes:
+  phoenix-data:

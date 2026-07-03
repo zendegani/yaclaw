@@ -130,6 +130,22 @@ Webhook messages run **untrusted** by default: the agent can read and reply but 
 
 ---
 
+## 🔭 Observability (optional)
+
+Pishkar always keeps an append-only SQLite audit log. For a visual LLM-trace UI, bring up one of the bundled backends:
+
+```bash
+# Arize Phoenix — the default; single container, fits a Pi 5
+docker compose -f deploy/docker-compose.phoenix.yml up -d
+
+# LangFuse v2 — richer dashboards; better suited to a VPS
+docker compose -f deploy/docker-compose.langfuse.yml up -d
+```
+
+Then select the backend in `.env` (`PISHKAR_TRACE_BACKEND=phoenix|langfuse|none`) and install the matching extra (`uv sync --extra phoenix` or `--extra langfuse`). Phoenix works with zero further config; LangFuse needs the project keys copied into `.env` — details in the compose file headers and `.env.example`.
+
+---
+
 ## 🍓 Running on a Raspberry Pi 5
 
 Pishkar is designed to be lightweight enough for a Pi 5 running 64-bit Raspberry Pi OS.
