@@ -7,13 +7,19 @@ Two behaviors layered on top of any inner provider:
   configurable.
 * **Hard stop at 100%.** Raises `BudgetExceeded` before contacting the
   inner provider.
+* **Threshold alerts.** When spend first crosses an alert threshold
+  (default 80%) on a given UTC day, the optional `alert_fn` is invoked
+  once — fire-and-forget and fail-open, like a hook — so the runtime can
+  notify the user (e.g. by submitting a synthetic inbound message).
 
 Spend is read from `SessionStore.tokens_spent_since` over the current UTC
 day, and freshly-observed `Usage` from each turn is written back via
 `record_token_spend`. Without a `user_id` the wrapper is a pass-through.
 """
 
-from collections.abc import AsyncIterator
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,6 +30,11 @@ CONCISE_DIRECTIVE = (
     "Token budget for today is running low. Be concise: short sentences, "
     "no preamble, only the essential answer."
 )
+
+DEFAULT_ALERT_THRESHOLDS: tuple[float, ...] = (0.8,)
+
+# (user_id, spent, budget, threshold) — called once per user/threshold/day.
+BudgetAlertFn = Callable[[str, int, int, float], Awaitable[None]]
 
 
 class BudgetExceeded(RuntimeError):
@@ -48,16 +59,57 @@ class BudgetedProvider(ModelProvider):
         *,
         concise_threshold: float = 0.7,
         model_label: str = "unknown",
+        alert_thresholds: Sequence[float] = DEFAULT_ALERT_THRESHOLDS,
+        alert_fn: BudgetAlertFn | None = None,
     ) -> None:
         self._inner = inner
         self._store = store
         self._budget = daily_budget_tokens
         self._threshold = concise_threshold
         self._model_label = model_label
+        self._alert_thresholds = tuple(sorted(alert_thresholds))
+        self._alert_fn = alert_fn
+        self._alerted: dict[str, set[float]] = {}
+        self._alerted_day = ""
+        self._alert_tasks: set[asyncio.Task[None]] = set()
 
     async def _spent_today(self, user_id: str) -> int:
         inp, out = await self._store.tokens_spent_since(user_id, _start_of_utc_day())
         return inp + out
+
+    def _check_alerts(self, user_id: str, spent: int) -> None:
+        """Fire `alert_fn` once per user/threshold/UTC-day, fail-open.
+
+        When several thresholds are crossed at once (first call of the
+        day at high spend) only the highest fires — they'd all say the
+        same thing.
+        """
+        if self._alert_fn is None:
+            return
+        day = _start_of_utc_day()
+        if day != self._alerted_day:
+            self._alerted_day = day
+            self._alerted.clear()
+        fired = self._alerted.setdefault(user_id, set())
+        crossed = [
+            t
+            for t in self._alert_thresholds
+            if spent >= self._budget * t and t not in fired
+        ]
+        if not crossed:
+            return
+        fired.update(crossed)
+        task = asyncio.create_task(
+            self._fire_alert(user_id, spent, max(crossed))
+        )
+        self._alert_tasks.add(task)
+        task.add_done_callback(self._alert_tasks.discard)
+
+    async def _fire_alert(self, user_id: str, spent: int, threshold: float) -> None:
+        assert self._alert_fn is not None
+        # Fail-open: alerts must never break a turn.
+        with contextlib.suppress(Exception):
+            await self._alert_fn(user_id, spent, self._budget, threshold)
 
     async def stream(
         self,
@@ -73,6 +125,7 @@ class BudgetedProvider(ModelProvider):
 
         if user_id is not None:
             spent = await self._spent_today(user_id)
+            self._check_alerts(user_id, spent)
             if spent >= self._budget:
                 raise BudgetExceeded(user_id, spent, self._budget)
             if spent >= self._budget * self._threshold:
@@ -98,4 +151,10 @@ class BudgetedProvider(ModelProvider):
             yield chunk
 
 
-__all__ = ["BudgetExceeded", "BudgetedProvider", "CONCISE_DIRECTIVE"]
+__all__ = [
+    "CONCISE_DIRECTIVE",
+    "DEFAULT_ALERT_THRESHOLDS",
+    "BudgetAlertFn",
+    "BudgetExceeded",
+    "BudgetedProvider",
+]
