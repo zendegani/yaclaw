@@ -68,7 +68,7 @@ DEFAULT_SYSTEM = (
 def build_handler(
     *,
     provider: ModelProvider,
-    model: str | ModelSelector,
+    model: "str | ModelSelector",
     registry: ToolRegistry | None = None,
     runner: SubprocessToolRunner | None = None,
     hooks: HookManager | None = None,

@@ -1,6 +1,6 @@
 """Tests for the Groq Whisper transcriber + env-driven factory."""
 
-from typing import Any
+from typing import Any, Self
 
 import httpx
 import pytest
@@ -28,7 +28,7 @@ class _StubClient:
         self._response = response
         self.calls: list[dict[str, Any]] = []
 
-    async def __aenter__(self) -> _StubClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_: Any) -> None:

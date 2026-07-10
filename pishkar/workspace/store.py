@@ -20,7 +20,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from uuid import uuid4
 
 import aiosqlite
@@ -158,7 +158,7 @@ class SessionStore:
             await self._db.close()
             self._db = None
 
-    async def __aenter__(self) -> SessionStore:
+    async def __aenter__(self) -> Self:
         await self.open()
         return self
 
