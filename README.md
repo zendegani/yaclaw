@@ -13,8 +13,9 @@
 - **Agentic Tool Use & Safety**: Can execute bash, read/write files, and make HTTP requests—guarded by a built-in **Approval Gate** (Ask Me / Allow Once / Allow All) to ensure you stay in control.
 - **MCP Extensibility**: Fully wired with the Model Context Protocol (MCP) to seamlessly connect to external tools and services. 
 - **Crash-Resilient**: Powered by an SQLite-backed queue with mid-turn crash detection. If your machine reboots, Pishkar resumes exactly where it left off.
-- **Cost & Context Aware**: Includes daily token budget enforcement, auto-concise mode, and SHA-256 loop detection to prevent runaway LLM costs.
+- **Cost & Context Aware**: Includes daily token budget enforcement with threshold alerts sent straight to your chat, auto-concise mode, and SHA-256 loop detection to prevent runaway LLM costs.
 - **Background Tasks**: Can wake up on a cron schedule (`HEARTBEAT.md`) to do background work without wasting LLM tokens while idle.
+- **Built-in Backups**: A `backup` tool archives a consistent snapshot of the session database plus your workspace to any mounted drive (`PISHKAR_BACKUP_DIR`) — schedule nightly runs via `cron.json`.
 - **Full Observability**: OpenTelemetry tracing built-in (via Arize Phoenix or Langfuse) so you can see exactly what the LLM is thinking and doing under the hood.
 - **Multi-Interface**: Chat via a beautiful Web UI or on the go via Telegram — including voice notes (Whisper STT + optional Piper TTS).
 - **Multi-Provider LLM**: Supports Anthropic, OpenAI, Gemini, OpenRouter, Groq, Moonshot, Qwen, and MiniMax.
