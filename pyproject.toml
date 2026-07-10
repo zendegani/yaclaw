@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "pydantic>=2.13.4",
     "aiosqlite>=0.20",
-    "fastapi>=0.138.1",
+    "fastapi>=0.139.0",
     "uvicorn[standard]>=0.51.0",
     "litellm>=1.50",
     "python-dotenv>=1.0",
@@ -21,7 +21,7 @@ dependencies = [
 #   uv sync --extra phoenix     # default — single container, Pi 5 friendly
 #   uv sync --extra langfuse    # richer dashboards; needs more RAM (VPS)
 phoenix = ["arize-phoenix-otel>=0.16.1"]
-langfuse = ["langfuse>=4.12.0,<5"]
+langfuse = ["langfuse>=4.14.0,<5"]
 # Faster semantic-memory search (SQL-side cosine distance). Optional —
 # without it, search falls back to a pure-Python scan.
 memory = ["sqlite-vec>=0.1.6"]
