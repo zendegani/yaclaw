@@ -28,7 +28,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from pishkar.tools.mcp_bridge import (
     HttpStreamMcpClient,
@@ -142,7 +142,7 @@ class _suppress:
     """Tiny stand-in for `contextlib.suppress(Exception)` in async paths
     where we also want to log the exception type at debug level."""
 
-    def __enter__(self) -> _suppress:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:  # type: ignore[no-untyped-def]

@@ -1,6 +1,6 @@
 # Pishkar
 
-![Status Alpha](https://img.shields.io/badge/Status-Alpha-FF8C00) [![Backend CI](https://github.com/zendegani/yaclaw/actions/workflows/ci-backend.yml/badge.svg?branch=main)](https://github.com/zendegani/yaclaw/actions/workflows/ci-backend.yml) [![Frontend CI](https://github.com/zendegani/yaclaw/actions/workflows/ci-frontend.yml/badge.svg?branch=main)](https://github.com/zendegani/yaclaw/actions/workflows/ci-frontend.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white) ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)
+![Status Alpha](https://img.shields.io/badge/Status-Alpha-FF8C00) [![Backend CI](https://github.com/zendegani/yaclaw/actions/workflows/ci-backend.yml/badge.svg?branch=main)](https://github.com/zendegani/yaclaw/actions/workflows/ci-backend.yml) [![Frontend CI](https://github.com/zendegani/yaclaw/actions/workflows/ci-frontend.yml/badge.svg?branch=main)](https://github.com/zendegani/yaclaw/actions/workflows/ci-frontend.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white) ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)
 
 **Pishkar** is a personal AI butler that runs locally and talks to you through a modern Web UI or Telegram. It maintains a persistent memory of your interactions by writing to plain markdown files locally, ensuring your data is always under your control.
 
@@ -23,7 +23,7 @@
 
 ## 🛠️ Requirements
 
-- **Python 3.14+** (Install via `uv python install 3.14` if missing)
+- **Python 3.12+** (Install via `uv python install 3.12` if missing)
 - [**uv**](https://docs.astral.sh/uv/) (Fast Python package installer)
 - **Node.js 20+** & **npm 11.12+** (Only required if running the Web UI)
 - **API Key** for your preferred LLM provider.
@@ -156,9 +156,9 @@ Pishkar is designed to be lightweight enough for a Pi 5 running 64-bit Raspberry
 # 1. Install system prerequisites
 sudo apt update && sudo apt install -y git curl
 
-# 2. Install uv and Python 3.14
+# 2. Install uv and Python 3.12
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv python install 3.14
+uv python install 3.12
 
 # 3. Setup Pishkar
 git clone https://github.com/zendegani/yaclaw.git && cd yaclaw
