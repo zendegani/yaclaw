@@ -7,9 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.13.4",
     "aiosqlite>=0.20",
-    "fastapi>=0.139.0",
+    "fastapi>=0.139.2",
     "uvicorn[standard]>=0.51.0",
-    "litellm>=1.92.0",
+    "litellm>=1.93.0",
     "python-dotenv>=1.0",
     "python-telegram-bot>=22.8",
     "python-multipart>=0.0.32",
