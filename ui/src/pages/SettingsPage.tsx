@@ -16,7 +16,7 @@ export function SettingsPage() {
       <h1 className="mb-1 text-lg font-semibold">Settings</h1>
       <p className="mb-6 text-sm text-muted-foreground">
         Pishkar treats the workspace as the source of truth for configuration. Edit the markdown files
-        under <code className="rounded bg-muted px-1 py-0.5 text-xs">~/.pishkar/users/&lt;user&gt;/</code> to adjust persona,
+        under <code className="rounded-sm bg-muted px-1 py-0.5 text-xs">~/.pishkar/users/&lt;user&gt;/</code> to adjust persona,
         identity, and standing tasks.
       </p>
       <Card className="mb-6">

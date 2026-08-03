@@ -33,14 +33,14 @@ export function ToolCall({ use, result, isError }: Props) {
       <CollapsibleContent className="mt-2 space-y-2">
         <div>
           <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">input</div>
-          <pre className="overflow-x-auto rounded bg-background/60 p-2 text-xs">
+          <pre className="overflow-x-auto rounded-sm bg-background/60 p-2 text-xs">
             {JSON.stringify(use.input, null, 2)}
           </pre>
         </div>
         {!pending && (
           <div>
             <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">result</div>
-            <pre className="max-h-64 overflow-auto rounded bg-background/60 p-2 text-xs">{result}</pre>
+            <pre className="max-h-64 overflow-auto rounded-sm bg-background/60 p-2 text-xs">{result}</pre>
           </div>
         )}
       </CollapsibleContent>
