@@ -73,7 +73,7 @@ export function TracePage() {
             return (
               <li
                 key={key}
-                className="rounded border border-border/50 bg-background"
+                className="rounded-sm border border-border/50 bg-background"
               >
                 <button
                   type="button"

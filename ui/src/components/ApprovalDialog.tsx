@@ -18,7 +18,7 @@ interface Props {
 function Headline({ tool, input }: { tool: string; input: Record<string, unknown> }) {
   if (tool === "bash" && typeof input.cmd === "string") {
     return (
-      <pre className="max-h-40 overflow-auto rounded bg-muted p-2 text-xs">
+      <pre className="max-h-40 overflow-auto rounded-sm bg-muted p-2 text-xs">
         <span className="text-muted-foreground">$ </span>
         {input.cmd}
       </pre>
@@ -66,7 +66,7 @@ export function ApprovalDialog({ approval, onAnswer }: Props) {
               <summary className="cursor-pointer text-muted-foreground">
                 Full arguments
               </summary>
-              <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2">
+              <pre className="mt-1 max-h-64 overflow-auto rounded-sm bg-muted p-2">
                 {JSON.stringify(approval.input, null, 2)}
               </pre>
             </details>
