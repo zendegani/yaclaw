@@ -7,9 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.13.4",
     "aiosqlite>=0.20",
-    "fastapi>=0.140.0",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.51.0",
-    "litellm>=1.93.0",
+    "litellm>=1.96.2",
     "python-dotenv>=1.0",
     "python-telegram-bot>=22.8",
     "python-multipart>=0.0.32",
@@ -20,8 +20,8 @@ dependencies = [
 # LLM-trace backends. Pick one (or neither):
 #   uv sync --extra phoenix     # default — single container, Pi 5 friendly
 #   uv sync --extra langfuse    # richer dashboards; needs more RAM (VPS)
-phoenix = ["arize-phoenix-otel>=0.16.1"]
-langfuse = ["langfuse>=4.14.1,<5"]
+phoenix = ["arize-phoenix-otel>=0.17.1"]
+langfuse = ["langfuse>=4.14.4,<5"]
 # Faster semantic-memory search (SQL-side cosine distance). Optional —
 # without it, search falls back to a pure-Python scan.
 memory = ["sqlite-vec>=0.1.6"]
