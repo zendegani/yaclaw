@@ -9,7 +9,8 @@ dependencies = [
     "aiosqlite>=0.20",
     "fastapi>=0.140.0",
     "uvicorn[standard]>=0.52.1",
-    "litellm>=1.93.0",
+    # 1.107.0 was a compromised PyPI release (credential stealer, 2026-10-21)
+    "litellm>=1.93.0,!=1.107.0",
     "python-dotenv>=1.0",
     "python-telegram-bot>=22.8",
     "python-multipart>=0.0.32",
