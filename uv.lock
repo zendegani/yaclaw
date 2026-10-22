@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -1710,7 +1710,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.140.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=4.14.1,<5" },
-    { name = "litellm", specifier = ">=1.93.0" },
+    { name = "litellm", specifier = ">=1.93.0,!=1.107.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
