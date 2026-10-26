@@ -22,7 +22,7 @@ dependencies = [
 #   uv sync --extra phoenix     # default — single container, Pi 5 friendly
 #   uv sync --extra langfuse    # richer dashboards; needs more RAM (VPS)
 phoenix = ["arize-phoenix-otel>=0.16.1"]
-langfuse = ["langfuse>=4.14.1,<5"]
+langfuse = ["langfuse>=4.14.1,<6"]
 # Faster semantic-memory search (SQL-side cosine distance). Optional —
 # without it, search falls back to a pure-Python scan.
 memory = ["sqlite-vec>=0.1.6"]
